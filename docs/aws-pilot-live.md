@@ -1,6 +1,6 @@
 # Thermolio Central Brain: AWS pilot
 
-This deployment was approved on September 10, 2026, with a CAD $40 monthly project budget. The AWS infrastructure, HTTPS application, Cognito configuration, and daily backups are deployed. User onboarding and authenticated assistant tool tests are still pending.
+This deployment was approved on September 10, 2026, with a CAD $40 monthly project budget. The AWS infrastructure, HTTPS application, Cognito configuration, and daily backups are deployed. The owner invitation and server authorization are complete. First sign-in, MFA enrollment, and authenticated assistant tool tests are still pending.
 
 ## Open Central Brain
 
@@ -10,11 +10,11 @@ The website is publicly reachable so cloud assistants can connect, but memories 
 
 ## Finish your first sign-in
 
-1. Specify the email address that should receive the Central Brain invitation and spending alerts. No invitation or email subscription has been sent yet.
-2. The operator creates your invited Cognito user and maps its subject identifier to the pilot workspace with review permissions. Access remains denied until that mapping exists.
-3. Open the invitation, set your password, and enroll an authenticator app when prompted. Do not share your password or MFA code in this chat.
-4. Sign in to Central Brain and confirm that you can open the review workspace.
-5. Confirm whether the Claude connector belongs in the Thermolio AI Inc. account shown in Claude Desktop or the personal account shown in Chrome. No Claude connector has been saved to either account.
+1. Open the Cognito invitation that was sent to the approved owner address. Use its temporary password for the first sign-in.
+2. Set a permanent password and enroll an authenticator app when prompted. Do not share your password or MFA code in this chat.
+3. Sign in to Central Brain and confirm that you can open the review workspace. The account's immutable Cognito subject is already mapped to the pilot workspace with review permissions.
+4. Confirm the separate AWS notification subscription email so spending and service alerts can be delivered.
+5. Choose the intended Claude account. No Claude connector has been saved to an account yet.
 6. Complete each assistant's OAuth connection and run the acceptance checks below.
 
 ## How the connection works
@@ -51,7 +51,7 @@ An assistant can retrieve approved memories and submit proposals. A proposal bec
 
 Client secrets remain in Cognito and must be entered only into the intended assistant's OAuth configuration. They are not included in this guide. If ChatGPT generates a different callback when its form is reopened, update that client's callback before connecting.
 
-ChatGPT developer mode is enabled, and its connector form is prepared. Both ChatGPT and Claude reached the live server and discovered its OAuth settings. Neither authenticated tool access nor automatic memory proposals have been validated yet.
+ChatGPT developer mode is enabled, and its connector form is prepared. Both ChatGPT and Claude reached the live server and discovered its OAuth settings. The owner invitation was sent, the immutable Cognito subject was authorized, and the live service reloaded the new mapping. Neither first sign-in nor authenticated tool access has been validated yet.
 
 Cognito signs and issues access tokens. A small metadata endpoint advertises its supported S256 method for MCP clients. The application still verifies the original Cognito issuer, signature, expiry, token type, allowed client, mapped user, and exact MCP resource audience. Assistant clients cannot obtain review or deletion powers through extra scopes.
 
@@ -80,7 +80,7 @@ A full month at ordinary rates is approximately CAD $36.87 under those assumptio
 
 The project has a USD $20 monthly budget filtered by the activated `Project=CentralBrain` tag. An automatic action is configured to stop only instance `i-02299bccafd17a809` at USD $16 of reported project cost. The lower threshold leaves room for delayed billing, currency conversion, taxes, and retained resources. The action is configured and in standby; its billing-triggered execution has not been forced during setup.
 
-AWS Budgets is not a hard spending cap. Charges arrive late, some shared charges may not carry project tags, and EBS, S3, and the Elastic IP can continue accruing charges while the instance is stopped. The stop control can interrupt service before month end if the trial does not apply. Email delivery remains pending the recipient and SNS confirmation. This is the account's only action-enabled budget, within AWS's allowance of two free action-enabled budgets. [AWS Budgets pricing](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/).
+AWS Budgets is not a hard spending cap. Charges arrive late, some shared charges may not carry project tags, and EBS, S3, and the Elastic IP can continue accruing charges while the instance is stopped. The stop control can interrupt service before month end if the trial does not apply. The alert subscription was created, but email delivery remains pending until the recipient confirms the SNS subscription. This is the account's only action-enabled budget, within AWS's allowance of two free action-enabled budgets. [AWS Budgets pricing](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/).
 
 The deployment uses standard CPU credits, Cognito Lite with authenticator MFA, standard encrypted Parameter Store, and a single server. It does not provision RDS, a load balancer, a NAT gateway, paid DNS, or an inference API.
 
@@ -108,4 +108,4 @@ This is a single-instance pilot with no high availability. Keep the data disk an
 
 ## Verification completed
 
-Nine local PostgreSQL tests passed, including authorization, row isolation, memory review, concurrency, MCP tools, OAuth discovery, and strict token audiences. CloudFormation and Python lint checks passed. The live HTTPS certificate, health and readiness endpoints, unauthenticated API rejection, MCP authentication challenge, OAuth metadata, Cognito sign-in page, scheduled backup, and isolated cloud restore were verified. A full EC2 reboot also passed: the correct encrypted data filesystem mounted, Docker and backups restarted, the application remained nonroot with a read-only root filesystem, and HTTPS readiness recovered. Full authenticated assistant use remains an onboarding acceptance gate.
+Nine local PostgreSQL tests passed, including authorization, row isolation, memory review, concurrency, MCP tools, OAuth discovery, and strict token audiences. CloudFormation and Python lint checks passed. The live HTTPS certificate, health and readiness endpoints, unauthenticated API rejection, MCP authentication challenge, OAuth metadata, Cognito sign-in page, scheduled backup, and isolated cloud restore were verified. A full EC2 reboot also passed: the correct encrypted data filesystem mounted, Docker and backups restarted, the application remained nonroot with a read-only root filesystem, and HTTPS readiness recovered. The owner invitation, immutable subject authorization, live configuration reload, and alert subscription creation also passed. First sign-in, MFA enrollment, alert subscription confirmation, and authenticated assistant use remain acceptance gates.

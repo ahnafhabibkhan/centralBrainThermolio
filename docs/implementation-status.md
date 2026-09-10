@@ -16,7 +16,7 @@ Nine PostgreSQL integration tests passed locally. Local and cloud dump-and-resto
 
 ## Deployment-dependent validation
 
-AWS provisioning, HTTPS certificate validation, application readiness, OAuth discovery, the Cognito sign-in page, S3 backup delivery, an isolated cloud restore, and recovery after a full host reboot have passed. ChatGPT and Claude both discovered the live OAuth configuration. User invitation, MFA enrollment, authenticated connector tool calls, and notification delivery remain pending. Discovery success alone does not prove an authenticated connection.
+AWS provisioning, HTTPS certificate validation, application readiness, OAuth discovery, the Cognito sign-in page, S3 backup delivery, an isolated cloud restore, and recovery after a full host reboot have passed. The owner invitation, immutable Cognito subject authorization, live configuration reload, and alert subscription creation also passed. ChatGPT and Claude both discovered the live OAuth configuration. First sign-in, MFA enrollment, authenticated connector tool calls, alert subscription confirmation, and notification delivery remain pending. Discovery success alone does not prove an authenticated connection.
 
 The pilot has one instance and no high availability. Retrieval uses English PostgreSQL full-text search, without embeddings or inference charges. Expired records are hidden from retrieval but remain stored until explicitly deleted. Deletion applies to one record; previous versions and external copies require separate review. Imported skills are reference text, and import requires explicit approval. No existing memory or skill artifacts were automatically imported.
 

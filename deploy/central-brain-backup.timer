@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Central Brain backup
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

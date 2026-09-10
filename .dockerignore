@@ -1,9 +1,9 @@
 .git
+.venv
 .env
+.env.*
+work
+**/__pycache__
 .pytest_cache
-__pycache__
-*.pyc
-tests
-docs
-memory
-skills
+.ruff_cache
+*.dump

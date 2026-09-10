@@ -1,0 +1,80 @@
+name: central-brain
+x-app: &app
+  image: ${APP_IMAGE:?Set an approved release image}
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=64m,mode=1777]
+  pids_limit: 150
+  logging:
+    driver: local
+    options: {max-size: 10m, max-file: '3'}
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database administrator password}
+    volumes:
+      - /srv/central-brain/postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 128m
+    mem_limit: 650m
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: '3'}
+  app:
+    <<: *app
+    restart: unless-stopped
+    mem_limit: 550m
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [database, edge]
+    environment:
+      ENVIRONMENT: production
+      PUBLIC_URL: ${PUBLIC_URL:?Set the HTTPS origin}
+      DATABASE_URL: ${DATABASE_URL:?Set the runtime database URL}
+      SESSION_SECRET: ${SESSION_SECRET:?Set a unique session secret}
+      CENTRAL_BRAIN_PRINCIPALS_JSON: '{}'
+      OAUTH_ISSUER: ${OAUTH_ISSUER:?Set the Cognito issuer}
+      OAUTH_CLIENT_IDS: ${OAUTH_CLIENT_IDS:?Set the three approved client IDs as JSON}
+      OAUTH_PRINCIPALS_JSON: ${OAUTH_PRINCIPALS_JSON:?Map approved Cognito subjects to principals}
+      OAUTH_WEB_CLIENT_ID: ${OAUTH_WEB_CLIENT_ID:?Set the review client ID}
+      OAUTH_WEB_CLIENT_SECRET: ${OAUTH_WEB_CLIENT_SECRET:?Set the review client secret}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/central-brain/caddy-data:/data
+      - /srv/central-brain/caddy-config:/config
+    networks: [edge]
+    mem_limit: 150m
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: '3'}
+  bootstrap:
+    <<: *app
+    profiles: [operations]
+    networks: [database]
+    environment:
+      LOCAL_ADMIN_URL: ${LOCAL_ADMIN_URL:?Set the administrator database URL for bootstrap}
+      DATABASE_URL: ${DATABASE_URL}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set the migration database URL}
+    command: [python, -m, central_brain.manage, bootstrap, --production-approved]
+networks:
+  database: {internal: true}
+  edge: {}

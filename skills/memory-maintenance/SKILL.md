@@ -15,10 +15,9 @@ a subject requests export or deletion.
 
 1. Authenticate the actor and verify the required reviewer/privacy role.
 2. Retrieve the record and its revision chain without changing it.
-3. For correction, create a new revision and supersede the old record.
-4. For expiry, archive it according to retention policy.
-5. For a privacy request, run the approved export/deletion workflow across source
-   rows, derived summaries, embeddings, caches, and backups as policy requires.
+3. For correction, use the review webpage to propose a new revision. The old record is superseded only when the human approves the replacement.
+4. Expired records are excluded from retrieval. The pilot does not automatically archive them.
+5. For export or deletion, direct the human to the review webpage. Deletion applies to one live record. Previous versions, backups, and assistant conversation copies require separate review. The pilot has no embedding or summary cleanup system.
 6. Write an audit event with identifiers and outcome, not deleted content.
 
 ## Output

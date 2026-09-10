@@ -1,0 +1,331 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Central Brain single-instance pilot. Deploy only after explicit approval.
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A public subnet in the selected VPC with an internet gateway route.
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: Must match SubnetId.
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+  PublicOrigin:
+    Type: String
+    AllowedPattern: 'https://[a-z0-9.-]+'
+    Description: Approved HTTPS origin without a trailing slash.
+  OAuthDomainPrefix:
+    Type: String
+    AllowedPattern: '[a-z0-9-]{1,63}'
+    Description: A unique Cognito hosted-login domain prefix.
+  ChatGPTCallback:
+    Type: String
+    AllowedPattern: 'https://.+'
+    Description: Exact callback URL displayed during connector setup.
+  ClaudeCallback:
+    Type: String
+    AllowedPattern: 'https://.+'
+    Description: Exact callback URL displayed during connector setup.
+  AlertEmail:
+    Type: String
+    Description: Approved address for service and budget alerts.
+Resources:
+  Backups:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireBackups
+            Status: Enabled
+            Prefix: backups/
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+  BackupPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Backups
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Backups.Arn, !Sub '${Backups.Arn}/*']
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: PilotStorageAndMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject]
+                Resource: !Sub '${Backups.Arn}/backups/*'
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${Backups.Arn}/releases/*'
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: CentralBrain
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS and certificate validation only. Administration uses SSM.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t4g.small
+      IamInstanceProfile: !Ref InstanceProfile
+      CreditSpecification:
+        CPUCredits: standard
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: false
+          SubnetId: !Ref SubnetId
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Project
+          Value: CentralBrain
+        - Key: Name
+          Value: central-brain-pilot
+  Address:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Instance
+  DatabaseDisk:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Size: 20
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Project
+          Value: CentralBrain
+  DiskAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref Instance
+      VolumeId: !Ref DatabaseDisk
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: central-brain-pilot
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: 'ON'
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      UserPoolTier: LITE
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+  LoginDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref OAuthDomainPrefix
+      UserPoolId: !Ref UserPool
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: central-brain
+      Name: Central Brain
+      Scopes:
+        - ScopeName: read
+          ScopeDescription: Retrieve approved memories and reviewed skills.
+        - ScopeName: propose
+          ScopeDescription: Submit memories for human review.
+        - ScopeName: review
+          ScopeDescription: Review memory proposals.
+        - ScopeName: admin
+          ScopeDescription: Delete individual memories.
+  WebClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: central-brain-review
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose, central-brain/review, central-brain/admin]
+      CallbackURLs: [!Sub '${PublicOrigin}/auth/callback']
+      SupportedIdentityProviders: [COGNITO]
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      TokenValidityUnits:
+        AccessToken: minutes
+  ChatGPTClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: central-brain-chatgpt
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose]
+      CallbackURLs: [!Ref ChatGPTCallback]
+      SupportedIdentityProviders: [COGNITO]
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+  ClaudeClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: central-brain-claude
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose]
+      CallbackURLs: [!Ref ClaudeCallback]
+      SupportedIdentityProviders: [COGNITO]
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+  Alerts:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+  InstanceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: The Central Brain instance failed its health checks.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref Alerts]
+  BackupAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: No successful Central Brain backup was reported in the last 26 hours.
+      Namespace: CentralBrain
+      MetricName: BackupSuccess
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 26
+      DatapointsToAlarm: 26
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref Alerts]
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-account-spend'
+        BudgetLimit:
+          Amount: 28
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  PublicIp:
+    Value: !Ref Address
+  DatabaseVolumeId:
+    Value: !Ref DatabaseDisk
+  BackupBucket:
+    Value: !Ref Backups
+  OAuthIssuer:
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+  WebClientId:
+    Value: !Ref WebClient
+  ChatGPTClientId:
+    Value: !Ref ChatGPTClient
+  ClaudeClientId:
+    Value: !Ref ClaudeClient

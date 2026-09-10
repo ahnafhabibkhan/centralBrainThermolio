@@ -1,5 +1,7 @@
 # Cloud deployment runbook
 
+This document preserves the earlier ECS/RDS alternative. The approved planning direction is the single-EC2 pilot described in [the current pilot runbook](pilot-runbook.md). Do not follow the AWS write sequence below for the pilot.
+
 The repository is cloud-ready but deliberately does not contain account-specific
 AWS identifiers. Cloud changes must be applied from an authenticated deployment
 role; never paste AWS credentials into a prompt or commit them to this repository.

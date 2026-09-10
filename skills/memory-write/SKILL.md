@@ -24,10 +24,9 @@ permits proposing a durable fact, preference, decision, project state, or summar
 3. Make the memory atomic, concise, and independent of the conversation transcript.
 4. Select an expiry or explicitly mark the information durable.
 5. Submit through the Brain API with an idempotency/deduplication key.
-6. Keep it `proposed` unless policy explicitly allows activation.
+6. Keep it `proposed`. The pilot always requires human approval on the review webpage.
 7. Return the memory ID and approval state; never claim an unconfirmed write.
 
 ## Output
 
-A write receipt containing memory ID, status, revision, and whether review is
-required.
+A write receipt contains the memory ID, status, and whether a new proposal was created. Explain that human review is required.

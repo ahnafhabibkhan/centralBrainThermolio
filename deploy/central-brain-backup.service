@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up Central Brain to its approved S3 bucket
+RequiresMountsFor=/srv/central-brain
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/central-brain/deploy/backup.env
+ExecStart=/bin/bash /opt/central-brain/deploy/backup.sh
+TimeoutStartSec=30min
+UMask=0077

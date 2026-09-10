@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block content %}
+<section class="login"><p class="eyebrow">YOUR CONTEXT, YOUR CALL</p><h1>A little less repeating.<br>A little more remembering.</h1>
+<p class="lead">Review what your assistants suggest remembering. You decide what becomes part of your shared context.</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if local %}<form action="/login" method="post" class="login-form">
+<input type="hidden" name="csrf_token" value="{{ csrf }}">
+<label for="token">Local reviewer token</label><input id="token" name="token" type="password" required autocomplete="off">
+<p class="hint">Use the reviewer token generated in your local .env file.</p><button class="primary">Open my workspace</button>
+</form>{% else %}<a class="button primary" href="/auth/login">Sign in to your workspace</a>{% endif %}</section>
+{% endblock %}

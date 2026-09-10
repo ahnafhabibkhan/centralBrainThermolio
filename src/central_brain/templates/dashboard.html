@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% block content %}
+<div class="heading"><div><p class="eyebrow">YOUR WORKSPACE · {{ workspace }}</p><h1>Your shared memory.</h1>
+<p class="lead">Keep the useful things. Let the rest go.</p></div><a class="button primary" href="/new">Add a memory</a></div>
+<div class="tabs" role="navigation" aria-label="Memory status">
+{% for key,label in [('proposed','Needs review'),('active','Approved'),('rejected','Rejected'),('superseded','Previous versions'),('archived','Archived')] %}
+<a href="/?view={{ key }}" {% if view==key %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</div>
+{% if view=='proposed' %}<p class="hint">These suggestions stay out of shared retrieval until you approve them.</p>{% endif %}
+<div class="memory-grid">{% for memory in memories %}<article class="memory-card">
+<div class="card-top"><span class="badge">{{ memory.memory_type|capitalize }}</span><span class="date">{{ memory.created_at.strftime('%b %d, %Y') }}</span></div>
+<a class="memory-content" href="/review/{{ memory.id }}">{{ memory.content[:260] }}{% if memory.content|length>260 %}…{% endif %}</a>
+<p class="source">Source: {{ memory.source.get('reference','No source recorded') }}</p>
+<div class="card-actions"><a href="/review/{{ memory.id }}">View details →</a>
+{% if memory.status=='proposed' %}<form action="/review/{{ memory.id }}/approve" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="small primary">Approve</button></form>{% endif %}</div>
+</article>{% else %}<section class="empty"><span class="empty-symbol">◎</span><h2>There is nothing here yet.</h2><p>New suggestions will appear here when an assistant proposes a memory.</p><a href="/new">Add your first memory →</a></section>{% endfor %}</div>
+<div class="pagination">{% if offset>0 %}<a href="/?view={{ view }}&offset={{ [offset-25,0]|max }}">Previous page</a>{% endif %}
+{% if memories|length==25 %}<a href="/?view={{ view }}&offset={{ offset+25 }}">Next page</a>{% endif %}</div>
+{% endblock %}

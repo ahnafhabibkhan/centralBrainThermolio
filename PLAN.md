@@ -1,5 +1,7 @@
 # Central Brain delivery plan
 
+The EC2 pilot is now implemented locally. See [the current implementation status](docs/implementation-status.md) and [the EC2 pilot runbook](docs/pilot-runbook.md). The original planning notes below describe the earlier starter state and alternatives, not current deployment instructions.
+
 This short plan is intentionally at the repository root so it is easy to locate.
 The detailed design remains under `docs/`.
 

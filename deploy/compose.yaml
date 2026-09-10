@@ -43,6 +43,7 @@ services:
       CENTRAL_BRAIN_PRINCIPALS_JSON: '{}'
       OAUTH_ISSUER: ${OAUTH_ISSUER:?Set the Cognito issuer}
       OAUTH_HOSTED_DOMAIN: ${OAUTH_HOSTED_DOMAIN:?Set the Cognito hosted-login origin}
+      OAUTH_SCOPE_PREFIX: ${OAUTH_SCOPE_PREFIX:?Set the exact MCP resource URL}
       OAUTH_CLIENT_IDS: ${OAUTH_CLIENT_IDS:?Set the three approved client IDs as JSON}
       OAUTH_PRINCIPALS_JSON: ${OAUTH_PRINCIPALS_JSON:?Map approved Cognito subjects to principals}
       OAUTH_WEB_CLIENT_ID: ${OAUTH_WEB_CLIENT_ID:?Set the review client ID}

@@ -83,6 +83,7 @@ Create `/opt/central-brain/deploy/.env` with permissions `0600`. Generate indepe
 | `OAUTH_CLIENT_IDS` | Set a JSON array containing all three client IDs. |
 | `OAUTH_WEB_CLIENT_ID` | Use the web client ID. |
 | `OAUTH_WEB_CLIENT_SECRET` | Use the web client secret. |
+| `OAUTH_SCOPE_PREFIX` | Use the exact MCP resource URL, including its trailing slash. |
 | `OAUTH_PRINCIPALS_JSON` | Map the approved Cognito subject as shown below. |
 
 ```json
@@ -109,9 +110,11 @@ Verify HTTPS certificate validity, `/health`, `/ready`, and sign-in. Confirm tha
 
 ## 6. Verify both assistant connections
 
-Use the public endpoint `https://hostname/mcp/`, a separate OAuth client for each assistant, and scopes `central-brain/read central-brain/propose`. Each assistant app must support the configured OAuth flow and manual client credentials. Account and plan availability must be checked during setup.
+Use the public endpoint `https://hostname/mcp/`, a separate OAuth client for each assistant, and the scopes advertised at `/.well-known/oauth-protected-resource`. Each assistant app must support the configured OAuth flow and manual client credentials. Account and plan availability must be checked during setup.
 
 The application requires a signed RS256 access token with the correct issuer, expiry, allowed client ID, allowlisted subject, `token_use=access`, and an audience matching `PUBLIC_URL` plus `/mcp/`. The authorization request must use that exact OAuth `resource`, including the trailing slash, to obtain the audience. Do not weaken token validation if a connector fails.
+
+Use Cognito Essentials and managed login version 2 for resource-bound tokens. The resource server identifier must equal the MCP resource URL, and custom scopes must belong to that resource server. The classic hosted UI does not supply the required audience.
 
 Check the issuer's discovery metadata and authorization flow for PKCE S256 and resource binding. Cognito-to-client discovery compatibility is a live acceptance gate, not something local signature tests establish. If an assistant rejects the metadata, cannot accept pre-registered credentials, or does not request the required audience, stop that connector rollout and design the smallest standards-compliant authorization adapter for review.
 
@@ -123,7 +126,7 @@ The server publishes four MCP tools: `search_memories`, `propose_memory`, `list_
 
 Create `backup.env` beside the Compose file with permissions `0600`. Set `BACKUP_BUCKET`, `INSTANCE_ID`, and `AWS_DEFAULT_REGION=ca-central-1` using stack outputs. Copy the supplied backup service and timer into `/etc/systemd/system/`, reload systemd, and enable `central-brain-backup.timer`.
 
-Run the service once manually and verify a nonempty S3 object and a `CentralBrain/BackupSuccess` metric. Confirm the SNS email subscription and test the notification path. The CloudWatch alarm detects 26 consecutive hours without a successful backup. Daily logical backups imply up to roughly 24 hours of data loss if the instance and database disk are both lost. They are not continuous recovery.
+Run the service once manually and verify a nonempty S3 object and a `CentralBrain/BackupSuccess` metric. Only confirm an SNS email subscription when the owner explicitly wants email alerts. This pilot uses internal AWS monitoring and has an empty alert email parameter. The CloudWatch alarm detects 26 consecutive hours without a successful backup. Daily logical backups imply up to roughly 24 hours of data loss if the instance and database disk are both lost. They are not continuous recovery.
 
 Backups exclude session rows. S3 encrypts objects at rest and requires TLS. Backup objects expire after 30 days; old object versions expire after a further 7 days. Deleting a memory removes its content from live retrieval but does not immediately erase historical backups or copies in assistant conversations. Restoring an old backup can resurrect deleted records, so reconcile approved deletions before reconnecting clients.
 

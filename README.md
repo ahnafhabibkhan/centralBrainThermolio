@@ -2,7 +2,7 @@
 
 Central Brain stores approved memories and reviewed procedures for connected assistants. It does not run a language model or capture conversations in the background. An assistant proposes a useful memory, you review it on the webpage, and connected assistants can retrieve it after approval.
 
-The pilot is deployed on AWS with HTTPS, PostgreSQL, Cognito OAuth, encrypted configuration, and daily backups. The owner invitation and server authorization are complete. First sign-in, MFA enrollment, and authenticated ChatGPT and Claude tool tests remain pending. See the [live deployment guide](docs/aws-pilot-live.md) for status, costs, and next steps.
+The pilot is deployed on AWS with HTTPS, PostgreSQL, Cognito OAuth, encrypted configuration, and daily backups. The owner invitation and server authorization are complete. Live workspace sign-in passes. Authenticator enrollment and authenticated ChatGPT and Claude tool tests remain pending. See the [live deployment guide](docs/aws-pilot-live.md) for status, costs, and next steps.
 
 ## Run locally
 

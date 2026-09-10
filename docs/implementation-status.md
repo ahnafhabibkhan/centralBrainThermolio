@@ -2,7 +2,7 @@
 
 The local implementation is on branch `codex/implement-ec2-pilot`. It replaces the starter API with a functioning review workflow and official-SDK MCP server.
 
-Nine PostgreSQL integration tests passed locally. Local and cloud dump-and-restore exercises passed, including excluded sessions and preserved row security. Desktop and mobile browser checks passed. The ARM container runs on AWS, and the CloudFormation stack completed successfully. See the [live deployment guide](aws-pilot-live.md).
+Eleven PostgreSQL integration tests passed locally. Local and cloud dump-and-restore exercises passed, including excluded sessions and preserved row security. Desktop and mobile browser checks passed. The ARM container runs on AWS, and the CloudFormation stack completed successfully. See the [live deployment guide](aws-pilot-live.md).
 
 ## Implemented locally
 
@@ -16,7 +16,7 @@ Nine PostgreSQL integration tests passed locally. Local and cloud dump-and-resto
 
 ## Deployment-dependent validation
 
-AWS provisioning, HTTPS certificate validation, application readiness, OAuth discovery, the Cognito sign-in page, S3 backup delivery, an isolated cloud restore, and recovery after a full host reboot have passed. The owner invitation, immutable Cognito subject authorization, live configuration reload, and alert subscription creation also passed. ChatGPT and Claude both discovered the live OAuth configuration. First sign-in, MFA enrollment, authenticated connector tool calls, alert subscription confirmation, and notification delivery remain pending. Discovery success alone does not prove an authenticated connection.
+AWS provisioning, HTTPS certificate validation, application readiness, OAuth discovery, the Cognito sign-in page, S3 backup delivery, an isolated cloud restore, and recovery after a full host reboot have passed. The owner invitation, immutable Cognito subject authorization, live configuration reload, and alert subscription creation also passed. ChatGPT and Claude both discovered the live OAuth configuration. The live OAuth callback and authenticated workspace access now pass. Authenticator enrollment and authenticated connector tool calls remain pending. The owner email requirement was removed because AWS monitoring is managed internally. The login flow skips the landing page, and Cognito uses managed login with matching resource-scoped permissions. Discovery success alone does not prove an authenticated connection.
 
 The pilot has one instance and no high availability. Retrieval uses English PostgreSQL full-text search, without embeddings or inference charges. Expired records are hidden from retrieval but remain stored until explicitly deleted. Deletion applies to one record; previous versions and external copies require separate review. Imported skills are reference text, and import requires explicit approval. No existing memory or skill artifacts were automatically imported.
 

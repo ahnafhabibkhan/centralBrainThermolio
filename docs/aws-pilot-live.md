@@ -1,6 +1,6 @@
 # Thermolio Central Brain: AWS pilot
 
-This deployment was approved on September 10, 2026, with a CAD $40 monthly project budget. The AWS infrastructure, HTTPS application, Cognito configuration, and daily backups are deployed. The owner invitation and server authorization are complete. First sign-in, MFA enrollment, and authenticated assistant tool tests are still pending.
+This deployment was approved on September 10, 2026, with a CAD $40 monthly project budget. The AWS infrastructure, HTTPS application, Cognito configuration, and daily backups are deployed. The owner invitation and server authorization are complete. The owner has successfully opened the authenticated workspace. Authenticator enrollment and assistant connector tests still require completion.
 
 ## Open Central Brain
 
@@ -10,12 +10,16 @@ The website is publicly reachable so cloud assistants can connect, but memories 
 
 ## Finish your first sign-in
 
-1. Open the Cognito invitation that was sent to the approved owner address. Use its temporary password for the first sign-in.
-2. Set a permanent password and enroll an authenticator app when prompted. Do not share your password or MFA code in this chat.
-3. Sign in to Central Brain and confirm that you can open the review workspace. The account's immutable Cognito subject is already mapped to the pilot workspace with review permissions.
-4. Confirm the separate AWS notification subscription email so spending and service alerts can be delivered.
-5. Choose the intended Claude account. No Claude connector has been saved to an account yet.
+1. Open Central Brain. Normal access goes directly to secure authentication, and an existing application session opens the workspace immediately.
+2. Use the permanent password already set for the invited owner account. Complete authenticator enrollment if prompted. Do not share the password, QR code, or MFA code in chat.
+3. After authentication, the site opens the review workspace. No second application sign-in is required.
+4. Ignore the earlier AWS notification confirmation email. The owner requested internal AWS management, and the stack's alert email parameter is now empty.
+5. Use the selected Thermolio Claude account for its connector. No Claude connector has been saved to an account yet.
 6. Complete each assistant's OAuth connection and run the acceptance checks below.
+
+Authenticator-app MFA has no separate MFA charge. The user pool uses Cognito Essentials with managed login version 2, which supports resource-bound access tokens. Essentials includes 10,000 direct or social monthly active users in the shared account or organization free allowance. The private pilot has one invited user. SMS and email MFA are not enabled. [AWS Cognito pricing](https://aws.amazon.com/cognito/pricing/).
+
+The earlier classic hosted UI did not provide the access-token audience required by Central Brain. Managed login supplies this resource binding. Token signature, issuer, expiry, audience, client, user mapping, and permission checks remain enforced. [AWS resource binding documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-define-resource-servers.html#resource-server-resource-binding).
 
 ## How the connection works
 
@@ -41,7 +45,7 @@ An assistant can retrieve approved memories and submit proposals. A proposal bec
 | Transport | Streamable HTTP |
 | Authentication | OAuth authorization code with PKCE S256 |
 | Client registration | Use the pre-registered client ID and client secret. |
-| Assistant scopes | `central-brain/read central-brain/propose` |
+| Assistant scopes | `https://16.54.184.1.sslip.io/mcp//read https://16.54.184.1.sslip.io/mcp//propose` |
 | ChatGPT base scope | `openid` |
 | ChatGPT token authentication | `client_secret_basic` |
 | ChatGPT client ID | `m36n9li0m0okmav3f4iun6nqs` |
@@ -49,9 +53,11 @@ An assistant can retrieve approved memories and submit proposals. A proposal bec
 | ChatGPT callback from the prepared form | `https://chatgpt.com/connector/oauth/ixfeyzGASI9E` |
 | Claude hosted callback | `https://claude.ai/api/mcp/auth_callback` |
 
+The double slash before each scope name is intentional: Cognito appends a slash and scope name to the resource identifier, which already ends in `/mcp/`. Copy the scope values exactly.
+
 Client secrets remain in Cognito and must be entered only into the intended assistant's OAuth configuration. They are not included in this guide. If ChatGPT generates a different callback when its form is reopened, update that client's callback before connecting.
 
-ChatGPT developer mode is enabled, and its connector form is prepared. Both ChatGPT and Claude reached the live server and discovered its OAuth settings. The owner invitation was sent, the immutable Cognito subject was authorized, and the live service reloaded the new mapping. Neither first sign-in nor authenticated tool access has been validated yet.
+ChatGPT developer mode is enabled, and its connector form is prepared. Both ChatGPT and Claude reached the live server and discovered its OAuth settings. The owner invitation was sent, the immutable Cognito subject was authorized, and the live service reloaded the new mapping. The owner has successfully signed in to the live workspace, and visits to `/login` now return the authenticated user directly to the workspace. Authenticated assistant tool access has not been validated yet.
 
 Cognito signs and issues access tokens. A small metadata endpoint advertises its supported S256 method for MCP clients. The application still verifies the original Cognito issuer, signature, expiry, token type, allowed client, mapped user, and exact MCP resource audience. Assistant clients cannot obtain review or deletion powers through extra scopes.
 
@@ -80,9 +86,11 @@ A full month at ordinary rates is approximately CAD $36.87 under those assumptio
 
 The project has a USD $20 monthly budget filtered by the activated `Project=CentralBrain` tag. An automatic action is configured to stop only instance `i-02299bccafd17a809` at USD $16 of reported project cost. The lower threshold leaves room for delayed billing, currency conversion, taxes, and retained resources. The action is configured and in standby; its billing-triggered execution has not been forced during setup.
 
-AWS Budgets is not a hard spending cap. Charges arrive late, some shared charges may not carry project tags, and EBS, S3, and the Elastic IP can continue accruing charges while the instance is stopped. The stop control can interrupt service before month end if the trial does not apply. The alert subscription was created, but email delivery remains pending until the recipient confirms the SNS subscription. This is the account's only action-enabled budget, within AWS's allowance of two free action-enabled budgets. [AWS Budgets pricing](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/).
+AWS Budgets is not a hard spending cap. Charges arrive late, some shared charges may not carry project tags, and EBS, S3, and the Elastic IP can continue accruing charges while the instance is stopped. The stop control can interrupt service before month end if the trial does not apply. AWS monitoring is managed internally. The owner email requirement was removed while retaining the project budget and alarms. This is the account's only action-enabled budget, within AWS's allowance of two free action-enabled budgets. [AWS Budgets pricing](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/).
 
-The deployment uses standard CPU credits, Cognito Lite with authenticator MFA, standard encrypted Parameter Store, and a single server. It does not provision RDS, a load balancer, a NAT gateway, paid DNS, or an inference API.
+AWS does not allow deletion of a pending email subscription. The earlier unconfirmed invitation will expire automatically after 48 hours. Do not confirm it. [AWS SNS deletion behavior](https://docs.aws.amazon.com/sns/latest/dg/sns-delete-subscription-topic.html).
+
+The deployment uses standard CPU credits, Cognito Essentials with authenticator MFA, standard encrypted Parameter Store, and a single server. It does not provision RDS, a load balancer, a NAT gateway, paid DNS, or an inference API.
 
 ## Operations and recovery
 
@@ -108,4 +116,4 @@ This is a single-instance pilot with no high availability. Keep the data disk an
 
 ## Verification completed
 
-Nine local PostgreSQL tests passed, including authorization, row isolation, memory review, concurrency, MCP tools, OAuth discovery, and strict token audiences. CloudFormation and Python lint checks passed. The live HTTPS certificate, health and readiness endpoints, unauthenticated API rejection, MCP authentication challenge, OAuth metadata, Cognito sign-in page, scheduled backup, and isolated cloud restore were verified. A full EC2 reboot also passed: the correct encrypted data filesystem mounted, Docker and backups restarted, the application remained nonroot with a read-only root filesystem, and HTTPS readiness recovered. The owner invitation, immutable subject authorization, live configuration reload, and alert subscription creation also passed. First sign-in, MFA enrollment, alert subscription confirmation, and authenticated assistant use remain acceptance gates.
+Eleven local PostgreSQL tests passed, including authorization, row isolation, memory review, concurrency, MCP tools, OAuth discovery, and strict token audiences. CloudFormation and Python lint checks passed. The live HTTPS certificate, health and readiness endpoints, unauthenticated API rejection, MCP authentication challenge, OAuth metadata, Cognito sign-in page, scheduled backup, and isolated cloud restore were verified. A full EC2 reboot also passed: the correct encrypted data filesystem mounted, Docker and backups restarted, the application remained nonroot with a read-only root filesystem, and HTTPS readiness recovered. The owner invitation, immutable subject authorization, live configuration reload, and alert subscription creation also passed. The live OAuth callback and authenticated workspace redirect now pass. Authenticator enrollment and authenticated assistant use remain acceptance gates. Email subscription confirmation is no longer required.

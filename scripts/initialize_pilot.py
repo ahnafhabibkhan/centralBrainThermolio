@@ -49,6 +49,7 @@ def main():
             'SESSION_SECRET': secrets.token_urlsafe(48), 'OAUTH_ISSUER': state['OAuthIssuer'],
             'OAUTH_HOSTED_DOMAIN': 'https://thermolio-central-brain-596104703378.auth.ca-central-1.amazoncognito.com',
             'OAUTH_CLIENT_IDS': json.dumps([state['WebClientId']]), 'OAUTH_PRINCIPALS_JSON': '{}',
+            'OAUTH_SCOPE_PREFIX': state['PublicUrl'] + '/mcp/',
             'OAUTH_WEB_CLIENT_ID': state['WebClientId'], 'OAUTH_WEB_CLIENT_SECRET': client['ClientSecret'],
         }
         content = ''.join(f"{key}='{value}'\n" for key, value in values.items())

@@ -8,6 +8,7 @@ from uuid import uuid4
 import jwt
 import psycopg
 import pytest
+from authlib.integrations.starlette_client.apps import StarletteOAuth2App
 from cryptography.hazmat.primitives.asymmetric import rsa
 from dotenv import dotenv_values
 from fastapi import HTTPException
@@ -166,6 +167,9 @@ def test_web_session_csrf_and_escaping(pilot):
     login = c.post('/login', data={'token': 'owner', 'csrf_token': csrf(page)})
     assert login.status_code == 200, login.text
     assert 'owner' not in c.cookies.get('brain_session')
+    returning = c.get('/login', follow_redirects=False)
+    assert returning.status_code == 303
+    assert returning.headers['location'] == '/'
     receipt = pilot.repo.create(pilot.auth, memory().model_copy(update={'content': '<script>alert(1)</script>'}))
     detail = c.get(f'/review/{receipt.memory_id}')
     assert '&lt;script&gt;' in detail.text
@@ -176,6 +180,15 @@ def test_web_session_csrf_and_escaping(pilot):
     page = c.get('/')
     assert c.post('/logout', data={'csrf_token': csrf(page)}).status_code == 200
     assert c.get('/', follow_redirects=False).status_code == 303
+
+
+def test_hosted_login_skips_landing_page(pilot):
+    pilot.settings.oauth_issuer = 'https://issuer.example/pool'
+    response = pilot.client.get('/login', follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/auth/login'
+    # Signing out must not immediately sign the user back in through hosted SSO.
+    assert pilot.client.get('/login?signed_out=true').status_code == 200
 
 
 def test_mcp_tools_and_auth(pilot):
@@ -219,3 +232,40 @@ def test_signed_oauth_tokens(pilot):
         with pytest.raises(HTTPException) as error:
             authenticator.verify(token(**changes))
         assert error.value.status_code == 401
+    unbound_claims = {name: value for name, value in claims.items() if name != 'aud'}
+    with pytest.raises(HTTPException):
+        authenticator.verify(jwt.encode(unbound_claims, key, algorithm='RS256'))
+
+
+def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
+        environment='production', public_url='https://brain.example',
+        central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
+        oauth_client_ids=['web'], oauth_web_client_id='web',
+        oauth_scope_prefix='https://brain.example/mcp/',
+        oauth_principals_json=json.dumps({'person': pilot.auth.principal.model_dump(mode='json')}))
+    claims = {'iss': settings.oauth_issuer, 'aud': settings.oauth_resource, 'sub': 'person',
+              'client_id': 'web', 'token_use': 'access', 'iat': datetime.now(UTC),
+              'exp': datetime.now(UTC) + timedelta(minutes=5),
+              'scope': 'https://brain.example/mcp//read https://brain.example/mcp//review'}
+
+    async def exchange(self, request, **kwargs):
+        return {'access_token': jwt.encode(claims, key, algorithm='RS256'),
+                'expires_at': claims['exp'].timestamp()}
+
+    monkeypatch.setattr(StarletteOAuth2App, 'authorize_access_token', exchange)
+    app = create_app(pilot.repo, settings)
+    app.state.authenticator.jwks = SimpleNamespace(
+        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key()))
+    with TestClient(app, base_url=settings.public_url) as client:
+        response = client.get('/auth/callback', follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers['location'] == '/'
+        assert client.get('/').status_code == 200
+        assert client.get('/login', follow_redirects=False).headers['location'] == '/'
+        client.cookies.clear()
+        del claims['aud']
+        rejected = client.get('/auth/callback')
+        assert 'Sign-in failed' in rejected.text
+        assert client.get('/', follow_redirects=False).status_code == 303

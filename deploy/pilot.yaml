@@ -200,7 +200,7 @@ Resources:
       AutoVerifiedAttributes: [email]
       MfaConfiguration: 'ON'
       EnabledMfas: [SOFTWARE_TOKEN_MFA]
-      UserPoolTier: LITE
+      UserPoolTier: ESSENTIALS
       Policies:
         PasswordPolicy:
           MinimumLength: 14
@@ -213,11 +213,12 @@ Resources:
     Properties:
       Domain: !Ref OAuthDomainPrefix
       UserPoolId: !Ref UserPool
+      ManagedLoginVersion: 2
   ResourceServer:
     Type: AWS::Cognito::UserPoolResourceServer
     Properties:
       UserPoolId: !Ref UserPool
-      Identifier: central-brain
+      Identifier: !If [CustomOrigin, !Sub '${PublicOrigin}/mcp/', !Sub 'https://${Address}.sslip.io/mcp/']
       Name: Central Brain
       Scopes:
         - ScopeName: read
@@ -237,7 +238,12 @@ Resources:
       GenerateSecret: true
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
-      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose, central-brain/review, central-brain/admin]
+      AllowedOAuthScopes:
+        - openid
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//read', !Sub 'https://${Address}.sslip.io/mcp//read']
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//propose', !Sub 'https://${Address}.sslip.io/mcp//propose']
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//review', !Sub 'https://${Address}.sslip.io/mcp//review']
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//admin', !Sub 'https://${Address}.sslip.io/mcp//admin']
       CallbackURLs:
         - !If [CustomOrigin, !Sub '${PublicOrigin}/auth/callback', !Sub 'https://${Address}.sslip.io/auth/callback']
       SupportedIdentityProviders: [COGNITO]
@@ -256,7 +262,10 @@ Resources:
       GenerateSecret: true
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
-      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose]
+      AllowedOAuthScopes:
+        - openid
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//read', !Sub 'https://${Address}.sslip.io/mcp//read']
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//propose', !Sub 'https://${Address}.sslip.io/mcp//propose']
       CallbackURLs: [!Ref ChatGPTCallback]
       SupportedIdentityProviders: [COGNITO]
       EnableTokenRevocation: true
@@ -271,11 +280,37 @@ Resources:
       GenerateSecret: true
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
-      AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose]
+      AllowedOAuthScopes:
+        - openid
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//read', !Sub 'https://${Address}.sslip.io/mcp//read']
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/mcp//propose', !Sub 'https://${Address}.sslip.io/mcp//propose']
       CallbackURLs: [!Ref ClaudeCallback]
       SupportedIdentityProviders: [COGNITO]
       EnableTokenRevocation: true
       PreventUserExistenceErrors: ENABLED
+  WebLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: LoginDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref WebClient
+      UseCognitoProvidedValues: true
+  ChatGPTLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Condition: HasChatGPT
+    DependsOn: LoginDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref ChatGPTClient
+      UseCognitoProvidedValues: true
+  ClaudeLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Condition: HasClaude
+    DependsOn: LoginDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref ClaudeClient
+      UseCognitoProvidedValues: true
   Alerts:
     Type: AWS::SNS::Topic
     Properties:

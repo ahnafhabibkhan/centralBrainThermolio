@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import secrets
 import time
 from pathlib import Path
@@ -15,6 +16,8 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .models import MemoryCreate, Source
+
+logger = logging.getLogger("central_brain")
 
 
 def install_web(app, settings, repo):
@@ -77,7 +80,16 @@ def install_web(app, settings, repo):
         csrf(request)
 
     @app.get("/login", include_in_schema=False)
-    def login_page(request: Request):
+    def login_page(request: Request, signed_out: bool = False):
+        if request.session.get("sid"):
+            try:
+                reviewer(request)
+            except HTTPException:
+                pass
+            else:
+                return RedirectResponse("/", 303)
+        if settings.oauth_issuer and not signed_out:
+            return RedirectResponse("/auth/login", 303)
         return page(request, "login.html", title="Welcome back")
 
     @app.get("/getting-started", include_in_schema=False)
@@ -108,11 +120,15 @@ def install_web(app, settings, repo):
     async def oauth_callback(request: Request):
         if not settings.oauth_issuer:
             raise HTTPException(404, "not found")
+        stage = "token exchange"
         try:
             token = await oauth.cognito.authorize_access_token(request, resource=settings.oauth_resource)
+            stage = "workspace session"
             await run_in_threadpool(establish, request, token["access_token"],
                                     min(token.get("expires_at", time.time()), time.time() + 3600))
-        except Exception:  # noqa: BLE001  OAuth failures must not expose credentials to the browser.
+        except Exception as exc:  # noqa: BLE001  OAuth failures must not expose credentials.
+            logger.warning("OAuth callback failed at %s: %s (cause: %s)", stage,
+                           type(exc).__name__, type(exc.__cause__).__name__)
             request.session.clear()
             return page(request, "login.html", title="Sign-in needs attention",
                         error="Sign-in failed. Check the approved account and OAuth configuration.")
@@ -124,7 +140,7 @@ def install_web(app, settings, repo):
         if sid := request.session.get("sid"):
             repo.session_delete(sid)
         request.session.clear()
-        return RedirectResponse("/login", 303)
+        return RedirectResponse("/login?signed_out=true", 303)
 
     @app.get("/", include_in_schema=False)
     def dashboard(request: Request, view: str = "proposed", offset: int = 0):

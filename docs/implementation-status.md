@@ -2,7 +2,7 @@
 
 The local implementation is on branch `codex/implement-ec2-pilot`. It replaces the starter API with a functioning review workflow and official-SDK MCP server.
 
-Eight PostgreSQL integration tests passed locally. The local dump-and-restore exercise also passed, including matching record counts, excluded sessions, and preserved row-level security. Desktop and mobile browser checks passed after correcting the sign-in page's referrer policy. The container image built successfully, and the CloudFormation template passed local linting.
+Nine PostgreSQL integration tests passed locally. Local and cloud dump-and-restore exercises passed, including excluded sessions and preserved row security. Desktop and mobile browser checks passed. The ARM container runs on AWS, and the CloudFormation stack completed successfully. See the [live deployment guide](aws-pilot-live.md).
 
 ## Implemented locally
 
@@ -16,7 +16,7 @@ Eight PostgreSQL integration tests passed locally. The local dump-and-restore ex
 
 ## Deployment-dependent validation
 
-AWS creation, public DNS, certificates, Cognito sign-in and MFA, live ChatGPT and Claude connections, S3 backup delivery, notification delivery, host restart, and cloud recovery are not yet performed. CloudFormation linting validates structure, not permissions or live service compatibility.
+AWS provisioning, HTTPS certificate validation, application readiness, OAuth discovery, the Cognito sign-in page, S3 backup delivery, an isolated cloud restore, and recovery after a full host reboot have passed. ChatGPT and Claude both discovered the live OAuth configuration. User invitation, MFA enrollment, authenticated connector tool calls, and notification delivery remain pending. Discovery success alone does not prove an authenticated connection.
 
 The pilot has one instance and no high availability. Retrieval uses English PostgreSQL full-text search, without embeddings or inference charges. Expired records are hidden from retrieval but remain stored until explicitly deleted. Deletion applies to one record; previous versions and external copies require separate review. Imported skills are reference text, and import requires explicit approval. No existing memory or skill artifacts were automatically imported.
 

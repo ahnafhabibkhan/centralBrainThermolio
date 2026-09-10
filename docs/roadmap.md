@@ -1,6 +1,6 @@
 # Staged implementation roadmap
 
-The local pilot now includes the review website, MCP server, production OAuth validation, and passing PostgreSQL integration tests. See [current implementation status](implementation-status.md). Cloud deployment and live assistant acceptance testing remain pending approval. The stages below preserve the broader roadmap.
+The pilot includes the review website, MCP server, production OAuth validation, passing PostgreSQL integration tests, and an approved AWS deployment. See [current implementation status](implementation-status.md). User onboarding and authenticated assistant acceptance tests remain pending. The stages below preserve the broader roadmap.
 
 Each stage has an explicit exit criterion. Start with Stage 0 rather than choosing
 an embedding model or building a chat UI.

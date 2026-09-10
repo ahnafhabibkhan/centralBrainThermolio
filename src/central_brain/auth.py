@@ -32,7 +32,7 @@ class TokenAuthenticator:
             key = self.jwks.get_signing_key_from_jwt(token)
             claims = jwt.decode(
                 token, key.key, algorithms=["RS256"], issuer=self.settings.oauth_issuer,
-                audience=self.settings.public_url,
+                audience=self.settings.oauth_resource,
                 options={"require": ["exp", "iat", "iss", "sub", "aud", "client_id", "token_use"]},
             )
             if claims["token_use"] != "access":

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     central_brain_principals_json: str = "{}"
     oauth_principals_json: str = "{}"
     oauth_issuer: str = ""
+    oauth_hosted_domain: str = ""
     oauth_client_ids: list[str] = Field(default_factory=list)
     oauth_web_client_id: str = ""
     oauth_web_client_secret: str = ""
@@ -45,12 +46,20 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires registered OAuth clients")
             if self.central_brain_principals_json != "{}":
                 raise ValueError("Static bearer tokens are local-development only")
+            if self.oauth_hosted_domain:
+                hosted = urlsplit(self.oauth_hosted_domain)
+                if hosted.scheme != "https" or not hosted.hostname or hosted.path or hosted.query or hosted.fragment:
+                    raise ValueError("OAuth hosted domain must be an HTTPS origin")
         elif url.hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("Local mode must use a loopback public_url")
         return self
 
     def principals(self) -> dict[str, Principal]:
         return TypeAdapter(dict[str, Principal]).validate_json(self.central_brain_principals_json)
+
+    @property
+    def oauth_resource(self) -> str:
+        return self.public_url + "/mcp/"
 
     def oauth_principals(self) -> dict[str, Principal]:
         return TypeAdapter(dict[str, Principal]).validate_json(self.oauth_principals_json)

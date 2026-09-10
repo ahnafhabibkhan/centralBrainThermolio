@@ -2,11 +2,11 @@
 
 ## Approval boundary
 
-These files are preparation only. Do not execute AWS write commands, register a DNS hostname, invite a user, import memory or skills, or deploy the application until the user approves those actions. No AWS resources were created during local implementation.
+The user approved this AWS pilot on September 10, 2026, with a CAD $40 monthly project limit and a preference for free services. The infrastructure and HTTPS application are deployed. See [the live deployment guide](aws-pilot-live.md). The invitation email and intended Claude account still need to be specified. Importing memory or skills requires separate authorization.
 
 The proposed deployment uses one `t4g.small` in `ca-central-1`, an encrypted 8 GB root disk, an encrypted 20 GB database disk, one public IPv4 address, S3 backups, Cognito, and basic alerts. It uses neither RDS nor a load balancer. Existing databases remain separate.
 
-The planning estimate was CAD $31 to $34 monthly before tax, with a CAD $40 target. Recheck regional prices and exchange rates before approval. The template's USD $28 budget watches the whole AWS account, including existing services, and sends an alert at 80 percent. It is not a spending cap. Retained storage, traffic, recovery work, and sustained load can increase costs. CPU credits use standard mode to avoid surplus-credit charges.
+The project budget is USD $20, filtered by the activated `Project=CentralBrain` cost tag. An automatic budget action stops only this project's instance at USD $16. AWS billing is delayed, and retained storage and the Elastic IP continue to cost money after a stop, so this is not a guaranteed hard cap. CPU credits use standard mode to avoid surplus-credit charges. The live guide includes conservative CAD estimates and the trial's expiry date.
 
 ## 1. Review inputs and preview changes
 
@@ -21,7 +21,7 @@ Validate the template locally:
 .venv/bin/cfn-lint deploy/pilot.yaml
 ```
 
-After permission to prepare AWS changes is granted, create a CloudFormation change set using `deploy/pilot.yaml`, the selected parameters, and `CAPABILITY_IAM`. Review the change set before execution. It includes EC2, an Elastic IP, EBS, an S3 bucket, IAM, Cognito clients, SNS email subscriptions, CloudWatch alarms, and an account budget. Execution incurs charges and can send invitation or subscription emails. Obtain deployment approval before executing the change set.
+For a future environment, obtain deployment authorization before creating resources. For this approved pilot, use the existing `central-brain-pilot` stack and preserve all existing parameter values during updates. Do not create a duplicate stack. The template includes EC2, an Elastic IP, EBS, S3, IAM, Cognito clients, SNS, CloudWatch alarms, and a project budget. Email subscriptions are enabled only after a recipient is supplied.
 
 Record all stack outputs. The template intentionally does not run arbitrary install scripts or launch the application. Confirm the instance becomes an SSM managed node before continuing. Install the local Session Manager plugin if it is missing, then connect using `aws ssm start-session --target INSTANCE_ID --region ca-central-1`.
 
@@ -111,7 +111,7 @@ Verify HTTPS certificate validity, `/health`, `/ready`, and sign-in. Confirm tha
 
 Use the public endpoint `https://hostname/mcp/`, a separate OAuth client for each assistant, and scopes `central-brain/read central-brain/propose`. Each assistant app must support the configured OAuth flow and manual client credentials. Account and plan availability must be checked during setup.
 
-The application requires a signed RS256 access token with the correct issuer, expiry, allowed client ID, allowlisted subject, `token_use=access`, and an audience matching `PUBLIC_URL`. The authorization request must use the OAuth `resource` parameter to obtain that audience. Do not weaken token validation if a connector fails.
+The application requires a signed RS256 access token with the correct issuer, expiry, allowed client ID, allowlisted subject, `token_use=access`, and an audience matching `PUBLIC_URL` plus `/mcp/`. The authorization request must use that exact OAuth `resource`, including the trailing slash, to obtain the audience. Do not weaken token validation if a connector fails.
 
 Check the issuer's discovery metadata and authorization flow for PKCE S256 and resource binding. Cognito-to-client discovery compatibility is a live acceptance gate, not something local signature tests establish. If an assistant rejects the metadata, cannot accept pre-registered credentials, or does not request the required audience, stop that connector rollout and design the smallest standards-compliant authorization adapter for review.
 

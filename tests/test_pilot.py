@@ -57,6 +57,20 @@ def headers(token='owner'):
     return {'Authorization': f'Bearer {token}'}
 
 
+def test_oauth_discovery_keeps_cognito_token_validation(pilot):
+    assert pilot.client.get('/.well-known/oauth-authorization-server').status_code == 404
+    pilot.settings.oauth_issuer = 'https://cognito-idp.ca-central-1.amazonaws.com/pool'
+    pilot.settings.oauth_hosted_domain = 'https://pilot.auth.ca-central-1.amazoncognito.com'
+    protected = pilot.client.get('/.well-known/oauth-protected-resource').json()
+    assert protected['authorization_servers'] == [pilot.settings.public_url]
+    assert protected['resource'] == pilot.settings.public_url + '/mcp/'
+    metadata = pilot.client.get('/.well-known/oauth-authorization-server').json()
+    assert metadata['code_challenge_methods_supported'] == ['S256']
+    assert metadata['token_endpoint'] == pilot.settings.oauth_hosted_domain + '/oauth2/token'
+    assert 'central-brain/review' not in metadata['scopes_supported']
+    assert pilot.settings.oauth_issuer.endswith('/pool')
+
+
 def memory(**updates):
     return MemoryCreate(content='Always show costs in CAD.', memory_type='preference',
                         source={'kind': 'human', 'reference': 'Explicit test instruction'}, **updates)
@@ -191,7 +205,7 @@ def test_signed_oauth_tokens(pilot):
         oauth_principals_json=json.dumps({'person': pilot.auth.principal.model_dump(mode='json')}))
     authenticator = TokenAuthenticator(settings)
     authenticator.jwks = SimpleNamespace(get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key()))
-    claims = {'iss': settings.oauth_issuer, 'aud': settings.public_url, 'sub': 'person',
+    claims = {'iss': settings.oauth_issuer, 'aud': settings.oauth_resource, 'sub': 'person',
               'client_id': 'connector', 'token_use': 'access', 'iat': datetime.now(UTC),
               'exp': datetime.now(UTC) + timedelta(minutes=5),
               'scope': 'central-brain/read central-brain/propose central-brain/review central-brain/admin'}
@@ -199,7 +213,8 @@ def test_signed_oauth_tokens(pilot):
         return jwt.encode({**claims, **updates}, key, algorithm='RS256')
     assert authenticator.verify(token()).principal.roles == {'reader', 'writer'}
     assert 'admin' in authenticator.verify(token(client_id='web')).principal.roles
-    for changes in ({'aud': 'https://wrong.example'}, {'client_id': 'unknown'}, {'sub': 'unknown'},
+    for changes in ({'aud': 'https://wrong.example'}, {'aud': settings.public_url},
+                    {'client_id': 'unknown'}, {'sub': 'unknown'},
                     {'token_use': 'id'}, {'exp': datetime.now(UTC) - timedelta(seconds=1)}):
         with pytest.raises(HTTPException) as error:
             authenticator.verify(token(**changes))

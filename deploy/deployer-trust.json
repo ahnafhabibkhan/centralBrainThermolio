@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::596104703378:user/console_fullaccess"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}

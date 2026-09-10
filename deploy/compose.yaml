@@ -4,14 +4,14 @@ x-app: &app
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
-  tmpfs: [/tmp:size=64m,mode=1777]
+  tmpfs: ['/tmp:size=64m,mode=1777']
   pids_limit: 150
   logging:
     driver: local
     options: {max-size: 10m, max-file: '3'}
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database administrator password}
@@ -42,6 +42,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?Set a unique session secret}
       CENTRAL_BRAIN_PRINCIPALS_JSON: '{}'
       OAUTH_ISSUER: ${OAUTH_ISSUER:?Set the Cognito issuer}
+      OAUTH_HOSTED_DOMAIN: ${OAUTH_HOSTED_DOMAIN:?Set the Cognito hosted-login origin}
       OAUTH_CLIENT_IDS: ${OAUTH_CLIENT_IDS:?Set the three approved client IDs as JSON}
       OAUTH_PRINCIPALS_JSON: ${OAUTH_PRINCIPALS_JSON:?Map approved Cognito subjects to principals}
       OAUTH_WEB_CLIENT_ID: ${OAUTH_WEB_CLIENT_ID:?Set the review client ID}
@@ -52,7 +53,7 @@ services:
       timeout: 5s
       retries: 3
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017
     restart: unless-stopped
     ports: ['80:80', '443:443']
     environment:

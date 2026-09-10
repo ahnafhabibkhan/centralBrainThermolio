@@ -14,7 +14,8 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
   PublicOrigin:
     Type: String
-    AllowedPattern: 'https://[a-z0-9.-]+'
+    Default: ''
+    AllowedPattern: '(^$|https://[a-z0-9.-]+)'
     Description: Approved HTTPS origin without a trailing slash.
   OAuthDomainPrefix:
     Type: String
@@ -22,21 +23,30 @@ Parameters:
     Description: A unique Cognito hosted-login domain prefix.
   ChatGPTCallback:
     Type: String
-    AllowedPattern: 'https://.+'
+    Default: ''
+    AllowedPattern: '(^$|https://.+)'
     Description: Exact callback URL displayed during connector setup.
   ClaudeCallback:
     Type: String
-    AllowedPattern: 'https://.+'
+    Default: ''
+    AllowedPattern: '(^$|https://.+)'
     Description: Exact callback URL displayed during connector setup.
   AlertEmail:
     Type: String
+    Default: ''
     Description: Approved address for service and budget alerts.
+Conditions:
+  CustomOrigin: !Not [!Equals [!Ref PublicOrigin, '']]
+  HasChatGPT: !Not [!Equals [!Ref ChatGPTCallback, '']]
+  HasClaude: !Not [!Equals [!Ref ClaudeCallback, '']]
+  HasEmail: !Not [!Equals [!Ref AlertEmail, '']]
 Resources:
   Backups:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Tags: [{Key: Project, Value: CentralBrain}]
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -96,6 +106,9 @@ Resources:
                 Action: s3:GetObject
                 Resource: !Sub '${Backups.Arn}/releases/*'
               - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/central-brain/pilot/environment'
+              - Effect: Allow
                 Action: cloudwatch:PutMetricData
                 Resource: '*'
                 Condition:
@@ -108,6 +121,7 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      Tags: [{Key: Project, Value: CentralBrain}]
       GroupDescription: Public HTTPS and certificate validation only. Administration uses SSM.
       VpcId: !Ref VpcId
       SecurityGroupIngress:
@@ -124,6 +138,7 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t4g.small
+      PropagateTagsToVolumeOnCreation: true
       IamInstanceProfile: !Ref InstanceProfile
       CreditSpecification:
         CPUCredits: standard
@@ -150,6 +165,7 @@ Resources:
   Address:
     Type: AWS::EC2::EIP
     Properties:
+      Tags: [{Key: Project, Value: CentralBrain}]
       Domain: vpc
       InstanceId: !Ref Instance
   DatabaseDisk:
@@ -175,6 +191,8 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      UserPoolTags:
+        Project: CentralBrain
       UserPoolName: central-brain-pilot
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
@@ -220,7 +238,8 @@ Resources:
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, central-brain/read, central-brain/propose, central-brain/review, central-brain/admin]
-      CallbackURLs: [!Sub '${PublicOrigin}/auth/callback']
+      CallbackURLs:
+        - !If [CustomOrigin, !Sub '${PublicOrigin}/auth/callback', !Sub 'https://${Address}.sslip.io/auth/callback']
       SupportedIdentityProviders: [COGNITO]
       EnableTokenRevocation: true
       PreventUserExistenceErrors: ENABLED
@@ -229,6 +248,7 @@ Resources:
         AccessToken: minutes
   ChatGPTClient:
     Type: AWS::Cognito::UserPoolClient
+    Condition: HasChatGPT
     DependsOn: ResourceServer
     Properties:
       UserPoolId: !Ref UserPool
@@ -243,6 +263,7 @@ Resources:
       PreventUserExistenceErrors: ENABLED
   ClaudeClient:
     Type: AWS::Cognito::UserPoolClient
+    Condition: HasClaude
     DependsOn: ResourceServer
     Properties:
       UserPoolId: !Ref UserPool
@@ -258,9 +279,26 @@ Resources:
   Alerts:
     Type: AWS::SNS::Topic
     Properties:
-      Subscription:
-        - Protocol: email
-          Endpoint: !Ref AlertEmail
+      Tags: [{Key: Project, Value: CentralBrain}]
+      Subscription: !If
+        - HasEmail
+        - [{Protocol: email, Endpoint: !Ref AlertEmail}]
+        - !Ref AWS::NoValue
+  AlertsPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref Alerts]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [budgets.amazonaws.com, cloudwatch.amazonaws.com]
+            Action: sns:Publish
+            Resource: !Ref Alerts
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
   InstanceAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -295,14 +333,17 @@ Resources:
       AlarmActions: [!Ref Alerts]
   MonthlyBudget:
     Type: AWS::Budgets::Budget
+    DependsOn: AlertsPolicy
     Properties:
       Budget:
-        BudgetName: !Sub '${AWS::StackName}-account-spend'
+        BudgetName: !Sub '${AWS::StackName}-project-spend'
         BudgetLimit:
-          Amount: 28
+          Amount: 20
           Unit: USD
         BudgetType: COST
         TimeUnit: MONTHLY
+        CostFilters:
+          TagKeyValue: ['user:Project$CentralBrain']
       NotificationsWithSubscribers:
         - Notification:
             NotificationType: ACTUAL
@@ -310,9 +351,58 @@ Resources:
             Threshold: 80
             ThresholdType: PERCENTAGE
           Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref AlertEmail
+            - SubscriptionType: SNS
+              Address: !Ref Alerts
+  BudgetStopRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: budgets.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {aws:SourceAccount: !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: StopOnlyCentralBrain
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:StopInstances
+                Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Instance}'
+              - Effect: Allow
+                Action: [ec2:DescribeInstances, ec2:DescribeInstanceStatus]
+                Resource: '*'
+              - Effect: Allow
+                Action: ssm:StartAutomationExecution
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}::automation-definition/AWS-StopEC2Instance:*'
+  BudgetStop:
+    Type: AWS::Budgets::BudgetsAction
+    DependsOn: MonthlyBudget
+    Properties:
+      BudgetName: !Sub '${AWS::StackName}-project-spend'
+      ActionType: RUN_SSM_DOCUMENTS
+      ApprovalModel: AUTOMATIC
+      NotificationType: ACTUAL
+      ActionThreshold: {Type: ABSOLUTE_VALUE, Value: 16}
+      ExecutionRoleArn: !GetAtt BudgetStopRole.Arn
+      Definition:
+        SsmActionDefinition:
+          InstanceIds: [!Ref Instance]
+          Region: !Ref AWS::Region
+          Subtype: STOP_EC2_INSTANCES
+      Subscribers:
+        - Type: SNS
+          Address: !Ref Alerts
 Outputs:
+  PublicUrl:
+    Value: !If [CustomOrigin, !Ref PublicOrigin, !Sub 'https://${Address}.sslip.io']
+  UserPoolId:
+    Value: !Ref UserPool
+  AlertsTopic:
+    Value: !Ref Alerts
   InstanceId:
     Value: !Ref Instance
   PublicIp:
@@ -326,6 +416,8 @@ Outputs:
   WebClientId:
     Value: !Ref WebClient
   ChatGPTClientId:
+    Condition: HasChatGPT
     Value: !Ref ChatGPTClient
   ClaudeClientId:
+    Condition: HasClaude
     Value: !Ref ClaudeClient

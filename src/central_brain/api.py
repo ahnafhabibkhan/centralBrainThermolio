@@ -169,9 +169,30 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
     @app.get("/.well-known/oauth-protected-resource")
     def protected_resource():
         return {
-            "resource": settings.public_url,
-            "authorization_servers": [settings.oauth_issuer] if settings.oauth_issuer else [],
+            "resource": settings.oauth_resource,
+            "authorization_servers": ([settings.public_url if settings.oauth_hosted_domain
+                                       else settings.oauth_issuer] if settings.oauth_issuer else []),
             "scopes_supported": [settings.oauth_scope_prefix + "/" + s for s in ("read", "propose")],
+        }
+
+    @app.get("/.well-known/oauth-authorization-server")
+    def authorization_server_metadata():
+        if not settings.oauth_hosted_domain:
+            raise HTTPException(404, "OAuth discovery is not configured")
+        # Cognito supports S256 but omits it from its OIDC discovery document.
+        # This OAuth metadata facade never issues tokens or changes their validation.
+        domain = settings.oauth_hosted_domain
+        return {
+            "issuer": settings.public_url,
+            "authorization_endpoint": domain + "/oauth2/authorize",
+            "token_endpoint": domain + "/oauth2/token",
+            "revocation_endpoint": domain + "/oauth2/revoke",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+            "code_challenge_methods_supported": ["S256"],
+            "scopes_supported": ["openid", settings.oauth_scope_prefix + "/read",
+                                 settings.oauth_scope_prefix + "/propose"],
         }
 
     @app.post("/v1/memories", response_model=WriteReceipt, status_code=201)

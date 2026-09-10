@@ -101,7 +101,7 @@ def install_web(app, settings, repo):
         if not settings.oauth_issuer:
             return RedirectResponse("/login", 303)
         return await oauth.cognito.authorize_redirect(
-            request, settings.public_url + "/auth/callback", resource=settings.public_url,
+            request, settings.public_url + "/auth/callback", resource=settings.oauth_resource,
         )
 
     @app.get("/auth/callback", include_in_schema=False)
@@ -109,7 +109,7 @@ def install_web(app, settings, repo):
         if not settings.oauth_issuer:
             raise HTTPException(404, "not found")
         try:
-            token = await oauth.cognito.authorize_access_token(request, resource=settings.public_url)
+            token = await oauth.cognito.authorize_access_token(request, resource=settings.oauth_resource)
             await run_in_threadpool(establish, request, token["access_token"],
                                     min(token.get("expires_at", time.time()), time.time() + 3600))
         except Exception:  # noqa: BLE001  OAuth failures must not expose credentials to the browser.

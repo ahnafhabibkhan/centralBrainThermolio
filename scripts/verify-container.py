@@ -21,7 +21,7 @@ with TestClient(create_app(settings=Settings(**json.load(sys.stdin)))) as client
     response = client.get('/login')
     assert response.status_code == 200
     assert response.headers['Referrer-Policy'] == 'same-origin'
-    assert 'Local reviewer token' in response.text
+    assert 'Local access key' in response.text
 print('Container readiness, packaged templates, and non-root execution passed.')
 '''
 result = subprocess.run([

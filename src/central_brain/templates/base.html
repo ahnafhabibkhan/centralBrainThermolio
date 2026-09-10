@@ -2,15 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ title }} · Central Brain</title>
+  <title>{{ title }} · Thermolio Central Brain</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/"><span class="brand-mark">cb</span> Central Brain</a>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar"><a class="brand" href="/" aria-label="Thermolio Central Brain home"><img class="brand-logo" src="/static/thermolio-logo.svg" alt="Thermolio" width="156" height="36"><span class="brand-product">Central Brain</span></a>
   {% if request.session.get('sid') %}<nav aria-label="Main navigation">
-    <a href="/">Memories</a><a href="/search">Search</a><a href="/skills">Skills</a>
+    <a href="/" {% if request.url.path=='/' %}aria-current="page"{% endif %}>Memories</a><a href="/search" {% if request.url.path=='/search' %}aria-current="page"{% endif %}>Search</a><a href="/skills" {% if request.url.path=='/skills' %}aria-current="page"{% endif %}>Skills</a><a href="/getting-started" {% if request.url.path=='/getting-started' %}aria-current="page"{% endif %}>Getting started</a>
     <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="quiet">Sign out</button></form>
-  </nav>{% endif %}</header>
-  <main>{% block content %}{% endblock %}</main>
-  <footer>One place for the context you choose to keep.{% if local %} <span class="local">Local development</span>{% endif %}</footer>
+  </nav>{% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}</header>
+  <main id="main">{% block content %}{% endblock %}</main>
+  <footer><span>Thermolio · Internal use only</span><a href="/getting-started">Getting started</a><span class="environment">{% if local %}Local preview{% else %}Restricted access{% endif %}</span></footer>
 </body></html>

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% block content %}
+<div class="guide"><p class="eyebrow">WORKSPACE GUIDE</p><h1>Getting started.</h1><p class="lead">Start with one memory. Review it, approve it, then find it again.</p>
+<section class="guide-section"><h2>1. Sign in to your workspace.</h2>
+{% if local %}<p>On your Mac, open Terminal and paste these two lines. The command copies your local reviewer access key to the clipboard without displaying it.</p>
+<pre class="command"><code>cd "{{ project_path }}"
+.venv/bin/python src/central_brain/manage.py copy-login-key</code></pre>
+<p>Return to the sign-in page, paste the key into <strong>Local access key</strong> with Command+V, and select <strong>Open workspace</strong>.</p>
+<a class="button primary" href="/login">Go to sign in <span aria-hidden="true">→</span></a>
+{% else %}<p>Sign in with your approved Thermolio account and complete the authentication prompt. Contact your workspace administrator if you do not have access.</p><a class="button primary" href="/auth/login">Sign in</a>{% endif %}
+</section>
+<section class="guide-section"><h2>2. Add your first memory.</h2><p>Choose <strong>Add a memory</strong>. Select its type, write one clear statement, and identify its source. You can use the example below if it reflects your actual preference.</p>
+<div class="example"><p><strong>Type:</strong> Preference</p><p><strong>Memory:</strong> Show project costs in CAD.</p><p><strong>Source:</strong> My instruction during Central Brain setup.</p></div>
+<p>Select <strong>Save proposal</strong>. This creates a suggestion for review, not an approved memory.</p></section>
+<section class="guide-section"><h2>3. Review and approve it.</h2><p>Open the proposal in <strong>Needs review</strong>. Check the wording and source. Select <strong>Approve memory</strong> to make it available for retrieval, <strong>Edit</strong> to correct it, or <strong>Reject</strong> to keep it out of shared context.</p><p>Editing an approved memory creates a new proposal. The original stays active until you approve its replacement.</p></section>
+<section class="guide-section"><h2>4. Find it again.</h2><p>Open <strong>Search</strong> and enter <strong>CAD</strong> to find the example you approved. Search returns approved, unexpired memories. You can export or delete an individual memory from its details page.</p></section>
+<section class="guide-section"><h2>5. Connect your assistants after deployment.</h2><p>{% if local %}This preview is running locally. Your regular ChatGPT and Claude apps are not connected through this setup yet. {% endif %}After the approved deployment and connector setup, an assistant can suggest a memory here. You review it on this page, and connected assistants can retrieve it after approval.</p><p>Central Brain does not capture every conversation automatically. The <strong>Skills</strong> page lists reusable procedures only after they have been reviewed and imported.</p></section>
+</div>{% endblock %}

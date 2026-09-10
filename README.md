@@ -14,16 +14,18 @@ python3.11 -m venv .venv
 .venv/bin/python -m central_brain.manage init-local
 docker compose up -d --wait
 .venv/bin/python -m central_brain.manage bootstrap
-.venv/bin/uvicorn central_brain.api:create_app --factory --host 127.0.0.1 --port 8080 --no-access-log
+.venv/bin/uvicorn central_brain.api:create_app --app-dir src --factory --host 127.0.0.1 --port 8080 --no-access-log
 ```
 
 Skip `init-local` when `.env` already exists. It intentionally refuses to overwrite credentials. Open [the local review page](http://127.0.0.1:8080). The reviewer token is the key whose roles include `reviewer` in `CENTRAL_BRAIN_PRINCIPALS_JSON` inside `.env`. On macOS, copy it directly to the clipboard without printing it:
 
 ```bash
-.venv/bin/python -c 'import json; from dotenv import dotenv_values; p=json.loads(dotenv_values(".env")["CENTRAL_BRAIN_PRINCIPALS_JSON"]); print(next(k for k,v in p.items() if "reviewer" in v["roles"]))' | pbcopy
+.venv/bin/python src/central_brain/manage.py copy-login-key
 ```
 
 Paste the token into the sign-in form. Select **Add a memory**, supply a concise fact and its source, and submit it. It remains in **Needs review** until you approve it. Search only returns approved, unexpired records. Editing an approved record creates a proposal; the original stays active until the correction is approved.
+
+The [in-app getting-started guide](http://127.0.0.1:8080/getting-started) explains this workflow step by step. The internal interface follows the [Thermolio brand reference](docs/brand-reference.md) and uses a locally served official logo.
 
 The other generated token has only `reader` and `writer` roles. Use it for local MCP tests at `http://127.0.0.1:8080/mcp/`. Normal cloud assistant apps cannot access this loopback endpoint. Production uses separate OAuth clients and HTTPS.
 

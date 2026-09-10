@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block content %}
-<a class="back" href="/">← Back to memories</a><div class="heading"><div><p class="eyebrow">{{ memory.status|upper }} · {{ memory.memory_type|upper }}</p><h1>Make it worth keeping.</h1></div></div>
+<a class="back" href="/">← Back to memories</a><div class="heading"><div><p class="eyebrow">{{ memory.status|upper }} · {{ memory.memory_type|upper }}</p><h1>Memory details.</h1></div></div>
 <article class="detail"><p class="full-content">{{ memory.content }}</p><dl>
 <dt>Source</dt><dd>{{ memory.source.get('reference','No source recorded') }}</dd>
 <dt>Visibility</dt><dd>{{ memory.visibility|capitalize }}</dd><dt>Sensitivity</dt><dd>{{ memory.sensitivity|capitalize }}</dd>

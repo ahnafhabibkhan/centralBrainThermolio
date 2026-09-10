@@ -1,10 +1,33 @@
 {% extends 'base.html' %}{% block content %}
-<section class="login"><p class="eyebrow">YOUR CONTEXT, YOUR CALL</p><h1>A little less repeating.<br>A little more remembering.</h1>
-<p class="lead">Review what your assistants suggest remembering. You decide what becomes part of your shared context.</p>
-{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-{% if local %}<form action="/login" method="post" class="login-form">
-<input type="hidden" name="csrf_token" value="{{ csrf }}">
-<label for="token">Local reviewer token</label><input id="token" name="token" type="password" required autocomplete="off">
-<p class="hint">Use the reviewer token generated in your local .env file.</p><button class="primary">Open my workspace</button>
-</form>{% else %}<a class="button primary" href="/auth/login">Sign in to your workspace</a>{% endif %}</section>
+<section class="login-layout" aria-labelledby="login-title">
+  <div class="login-intro">
+    <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>THERMOLIO WORKSPACE</p>
+    <h1 id="login-title">Central Brain<span class="title-dot">.</span></h1>
+    <p class="lead">Manage the knowledge your team and assistants share.</p>
+    <p class="intro-note">Review proposed memories, keep decisions current, and find approved context in one place.</p>
+    <ol class="workflow" aria-label="Memory workflow">
+      <li><span class="step-number">01</span><div><strong>Capture</strong><p>Add a useful fact, preference, or decision with its source.</p></div></li>
+      <li><span class="step-number">02</span><div><strong>Review</strong><p>Approve, edit, or reject each proposed memory.</p></div></li>
+      <li><span class="step-number">03</span><div><strong>Retrieve</strong><p>Search approved knowledge when you need it.</p></div></li>
+    </ol>
+  </div>
+  <div class="access-panel">
+    <div class="access-heading"><p class="eyebrow">WORKSPACE ACCESS</p><h2>Sign in</h2><p>Access is limited to authorized Thermolio users.</p></div>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if local %}
+    <form action="/login" method="post" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label for="token">Local access key</label>
+      <input id="token" name="token" type="password" required autocomplete="off" aria-describedby="key-help">
+      <p class="hint" id="key-help">Paste the reviewer key from your local setup.</p>
+      <button class="primary">Open workspace <span aria-hidden="true">↗</span></button>
+    </form>
+    <div class="access-help"><strong>First time here?</strong><p>The setup guide shows you how to copy your access key and create your first memory.</p><a href="/getting-started">Follow the setup guide <span aria-hidden="true">→</span></a></div>
+    <div class="connection-note"><span class="status-dot" aria-hidden="true"></span><p>This preview runs on your Mac. Cloud assistant connections are configured after deployment.</p></div>
+    {% else %}
+    <a class="button primary" href="/auth/login">Sign in to Thermolio <span aria-hidden="true">↗</span></a>
+    <p class="hint">Use your approved account and complete the authentication prompt.</p>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

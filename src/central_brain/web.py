@@ -80,6 +80,11 @@ def install_web(app, settings, repo):
     def login_page(request: Request):
         return page(request, "login.html", title="Welcome back")
 
+    @app.get("/getting-started", include_in_schema=False)
+    def getting_started(request: Request):
+        from .manage import ROOT
+        return page(request, "getting-started.html", title="Getting started", project_path=str(ROOT))
+
     @app.post("/login", include_in_schema=False)
     def local_login(request: Request, token: str = Form(...), csrf_token: str = Form(...)):
         if settings.environment != "local":
@@ -88,7 +93,7 @@ def install_web(app, settings, repo):
         try:
             establish(request, token, time.time() + 28800)
         except HTTPException:
-            return page(request, "login.html", title="Welcome back", error="The reviewer token is invalid.")
+            return page(request, "login.html", title="Welcome back", error="The access key is invalid. Copy your reviewer key and try again.")
         return RedirectResponse("/", 303)
 
     @app.get("/auth/login", include_in_schema=False)

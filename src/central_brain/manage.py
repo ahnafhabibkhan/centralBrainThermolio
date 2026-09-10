@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -15,6 +17,21 @@ from psycopg import sql
 WORKSPACE = UUID("a22cdb8e-6c0d-4b59-b292-a4e5593156c1")
 ACTOR = UUID("f1aa197b-4291-4d81-a00c-cab55a1ceff0")
 ROOT = Path(os.environ.get("CENTRAL_BRAIN_ROOT", Path(__file__).resolve().parents[2]))
+
+
+def copy_login_key():
+    """Copy the local reviewer credential without printing it or altering credentials."""
+    env = dotenv_values(".env")
+    if env.get("ENVIRONMENT") != "local":
+        raise ValueError("This command is only available for a local development setup")
+    principals = json.loads(env["CENTRAL_BRAIN_PRINCIPALS_JSON"])
+    token = next((key for key, value in principals.items() if "reviewer" in value["roles"]), None)
+    if not token:
+        raise ValueError("No local reviewer key is configured")
+    if sys.platform != "darwin":
+        raise ValueError("Clipboard copying requires macOS. Read the reviewer key from your local .env file.")
+    subprocess.run(["/usr/bin/pbcopy"], input=token, text=True, check=True)
+    print("Your local reviewer key is copied. Paste it into the sign-in page.")
 
 
 def init_local():
@@ -110,11 +127,14 @@ def import_skills(migrator_url, approved):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["init-local", "bootstrap", "import-skills"])
+    parser.add_argument("command", choices=["init-local", "bootstrap", "import-skills", "copy-login-key"])
     parser.add_argument("--database", default="central_brain")
     parser.add_argument("--production-approved", action="store_true")
     parser.add_argument("--confirm-reviewed", action="store_true")
     args = parser.parse_args()
+    if args.command == "copy-login-key":
+        copy_login_key()
+        return
     if args.command == "init-local":
         init_local()
         return

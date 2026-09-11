@@ -8,8 +8,8 @@ from uuid import UUID
 
 from authlib.integrations.starlette_client import OAuth
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import Form, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -18,6 +18,21 @@ from starlette.concurrency import run_in_threadpool
 from .models import MemoryCreate, Source
 
 logger = logging.getLogger("central_brain")
+
+
+def markdown_content(file):
+    if not file.filename or Path(file.filename).suffix.lower() != ".md":
+        raise HTTPException(422, "Memories must be uploaded as .md files.")
+    data = file.file.read(80001)
+    if len(data) > 80000:
+        raise HTTPException(413, "Memory files must contain at most 20,000 characters.")
+    try:
+        content = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(422, "Save the Markdown file as UTF-8 text.") from None
+    if not content.strip() or len(content) > 20000 or "\x00" in content:
+        raise HTTPException(422, "Provide a Markdown file with 1 to 20,000 text characters.")
+    return content
 
 
 def install_web(app, settings, repo):
@@ -64,6 +79,11 @@ def install_web(app, settings, repo):
             raise HTTPException(303, "sign in", headers={"Location": "/login"}) from None
 
     def page(request, template, **context):
+        if request.session.get("sid") and hasattr(app.state, "library"):
+            auth = reviewer(request)
+            app.state.library.project_memories(auth)
+            roots, tree = app.state.library.workspace_folders(auth)
+            context.update(library_roots=roots, folder_tree=tree)
         return templates.TemplateResponse(request=request, name=template, context={
             "csrf": csrf(request), "local": settings.environment == "local", **context,
         })
@@ -146,8 +166,10 @@ def install_web(app, settings, repo):
         return RedirectResponse("/login?signed_out=true", 303)
 
     @app.get("/", include_in_schema=False)
-    def dashboard(request: Request, view: str = "proposed", offset: int = 0):
+    def dashboard(request: Request, view: str | None = None, offset: int = 0):
         auth = reviewer(request)
+        if view is None:
+            return RedirectResponse("/library", 303)
         if view not in {"proposed", "active", "rejected", "superseded", "archived"}:
             raise HTTPException(400, "invalid view")
         if offset < 0 or offset > 100000:
@@ -162,10 +184,11 @@ def install_web(app, settings, repo):
         return page(request, "edit.html", title="Add a memory", memory=None)
 
     @app.post("/new", include_in_schema=False)
-    def new_memory(request: Request, content: str = Form(...), memory_type: str = Form(...),
+    def new_memory(request: Request, file: UploadFile = File(...), memory_type: str = Form(...),
                    source_reference: str = Form(...), csrf_token: str = Form(...)):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
+        content = markdown_content(file)
         try:
             item = MemoryCreate(content=content, memory_type=memory_type,
                                 source=Source(kind="human", reference=source_reference))
@@ -187,10 +210,11 @@ def install_web(app, settings, repo):
         return page(request, "edit.html", title="Edit a memory", memory=memory)
 
     @app.post("/review/{memory_id}/edit", include_in_schema=False)
-    def edit(request: Request, memory_id: UUID, content: str = Form(...),
+    def edit(request: Request, memory_id: UUID, file: UploadFile = File(...),
              source_reference: str = Form(...), csrf_token: str = Form(...)):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
+        content = markdown_content(file)
         original = repo.get(auth, memory_id)
         try:
             item = MemoryCreate(
@@ -216,18 +240,19 @@ def install_web(app, settings, repo):
         if action not in {"approve", "reject", "delete"}:
             raise HTTPException(404, "not found")
         repo.transition(auth, memory_id, action)
-        return RedirectResponse("/", 303)
+        return RedirectResponse("/?view=proposed", 303)
 
     @app.get("/review/{memory_id}/export", include_in_schema=False)
     def export(request: Request, memory_id: UUID):
         memory = repo.get(reviewer(request), memory_id)
-        return JSONResponse(memory.model_dump(mode="json"), headers={
-            "Content-Disposition": f'attachment; filename="memory-{memory_id}.json"'
+        return Response(memory.content, media_type="text/markdown; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="memory-{memory_id}.md"'
         })
 
     @app.get("/skills", include_in_schema=False)
     def skills_page(request: Request):
-        return page(request, "skills.html", title="Reusable skills", skills=repo.skills(reviewer(request)))
+        roots, _ = app.state.library.workspace_folders(reviewer(request))
+        return RedirectResponse(f"/library?folder={roots['Skills']}", 303)
 
     @app.get("/search", include_in_schema=False)
     def search_page(request: Request, q: str = Query("", max_length=2000)):

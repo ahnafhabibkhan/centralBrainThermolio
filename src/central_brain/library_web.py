@@ -19,8 +19,11 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         offset: int = Query(0, ge=0, le=100000),
     ):
         auth = reviewer(request)
+        library.project_memories(auth)
+        roots, tree = library.workspace_folders(auth)
         rows = library.listing(auth, folder, True, offset)
         location = library.info(auth, folder, True) if folder else None
+        section = location["path"].strip("/").split("/")[0] if location else ""
         with repo._connection(auth) as c:
             suggestions = c.execute(
                 "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' ORDER BY created_at LIMIT 50"
@@ -28,7 +31,9 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         return page(
             request,
             "library.html",
-            title="Files",
+            title="Library",
+            section=section,
+            skills=repo.skills(auth) if section == "Skills" else [],
             rows=rows,
             folder=location,
             usage=library.usage(auth),
@@ -63,6 +68,20 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             data = await file.read(settings.library_file_bytes + 1)
             parent = UUID(str(form["parent_id"])) if form.get("parent_id") else None
             node = UUID(str(form["node_id"])) if form.get("node_id") else None
+            if parent and library.path(auth, parent).strip('/').split('/')[0] == "Memories":
+                from .models import MemoryCreate, Source
+                from .web import markdown_content
+                import io
+                from types import SimpleNamespace
+
+                content = markdown_content(SimpleNamespace(filename=file.filename, file=io.BytesIO(data)))
+                receipt = await run_in_threadpool(repo.create, auth, MemoryCreate(
+                    content=content, memory_type="fact",
+                    visibility=str(form.get("visibility", "workspace")),
+                    source=Source(kind="document", reference=file.filename),
+                ))
+                await run_in_threadpool(library.move, auth, receipt.memory_id, f"Memory-{receipt.memory_id}.md", parent)
+                return RedirectResponse(f"/review/{receipt.memory_id}", 303)
             result = await run_in_threadpool(
                 library.upload,
                 auth,
@@ -81,10 +100,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
     ):
         auth = reviewer(request)
         node = library.info(auth, node_id, True)
-        with repo._connection(auth) as c:
-            folders = c.execute(
-                "SELECT id,name FROM central_brain.library_nodes WHERE kind='folder' AND status='active' ORDER BY name LIMIT 500"
-            ).fetchall()
+        _, folders = library.workspace_folders(auth)
         return page(
             request,
             "file.html",
@@ -156,7 +172,11 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             parent = UUID(p["parent_id"]) if p.get("parent_id") else None
             if action == "approve":
                 if row["action"] == "folder":
-                    library.folder(auth, p["name"], parent, connection=c)
+                    existing = c.execute("SELECT id FROM central_brain.library_nodes WHERE kind='folder' "
+                                         "AND status='active' AND parent_id IS NOT DISTINCT FROM %s "
+                                         "AND lower(name)=lower(%s)", (parent, p["name"])).fetchone()
+                    if not existing:
+                        library.folder(auth, p["name"], parent, connection=c)
                 else:
                     library.move(auth, UUID(p["node_id"]), p["name"], parent, connection=c)
             c.execute(

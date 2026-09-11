@@ -1,9 +1,10 @@
 {% extends 'base.html' %}{% block content %}
-<a class="back" href="/">← Back to memories</a><h1>{{ title }}.</h1>
-<p class="lead">Use a clear statement and record where it came from.</p>
-<form method="post" class="editor"><input type="hidden" name="csrf_token" value="{{ csrf }}">
+<a class="back" href="/?view=proposed">← Back to memory review</a><h1>{{ title }}.</h1>
+<p class="lead">Upload a Markdown file and record where it came from. Updates also use .md files.</p>
+{% if memory %}<p><a href="/review/{{ memory.id }}/export">Download the current Markdown file</a>, edit it locally, then upload your replacement below.</p>{% endif %}
+<form method="post" enctype="multipart/form-data" class="editor"><input type="hidden" name="csrf_token" value="{{ csrf }}">
 {% if not memory %}<label for="memory_type">Type</label><select id="memory_type" name="memory_type">{% for kind in ['fact','preference','decision','project','summary'] %}<option value="{{ kind }}">{{ kind|capitalize }}</option>{% endfor %}</select>{% endif %}
-<label for="content">What should be remembered?</label><textarea id="content" name="content" required maxlength="20000" rows="7">{{ memory.content if memory else '' }}</textarea>
+<label for="file">Memory file (.md)</label><input id="file" type="file" name="file" accept=".md,text/markdown" required><p class="hint">Use UTF-8 Markdown with up to 20,000 characters.</p>
 <label for="source_reference">Where did this come from?</label><input id="source_reference" name="source_reference" required maxlength="1000" value="{{ memory.source.get('reference','') if memory else '' }}" placeholder="For example, your project decision on September 10.">
 <p class="hint">{% if memory and memory.status=='active' %}This creates a new proposal. The original stays active until you approve its replacement.{% else %}This stays a proposal until you approve it.{% endif %}</p>
 <button class="primary">Save proposal</button></form>{% endblock %}

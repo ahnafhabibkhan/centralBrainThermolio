@@ -148,6 +148,39 @@ class Library:
                 "FROM central_brain.memories WHERE deleted_at IS NULL AND created_by IS NOT NULL ON CONFLICT DO NOTHING"
             )
 
+    def workspace_folders(self, auth):
+        """Return an access-filtered tree and create the requested workspace roots."""
+        auth.require("reviewer")
+        with self.repo._connection(auth) as c:
+            self._lock(c, auth)
+            roots = {}
+            for name in ("Memories", "Skills"):
+                row = c.execute(
+                    "SELECT id,kind FROM central_brain.library_nodes WHERE parent_id IS NULL "
+                    "AND lower(name)=lower(%s) AND status='active' LIMIT 1", (name,)
+                ).fetchone()
+                if row and row["kind"] == "folder":
+                    roots[name] = row["id"]
+                elif not row:
+                    roots[name] = self.folder(auth, name, connection=c)
+                else:
+                    raise HTTPException(409, f"Rename the root file named {name} to make room for the workspace folder.")
+            if roots.get("Memories"):
+                c.execute("UPDATE central_brain.library_nodes SET parent_id=%s "
+                          "WHERE kind='memory' AND parent_id IS NULL", (roots["Memories"],))
+            rows = c.execute(
+                "WITH RECURSIVE tree AS (SELECT id,parent_id,name,ARRAY[name] AS parts "
+                "FROM central_brain.library_nodes WHERE kind='folder' AND status='active' "
+                "AND parent_id IS NULL AND sensitivity=ANY(%s) UNION ALL "
+                "SELECT n.id,n.parent_id,n.name,t.parts||n.name FROM central_brain.library_nodes n "
+                "JOIN tree t ON n.parent_id=t.id WHERE n.kind='folder' AND n.status='active' "
+                "AND n.sensitivity=ANY(%s) AND cardinality(t.parts)<32) "
+                "SELECT *,array_to_string(parts,' / ') AS path,cardinality(parts)-1 AS depth "
+                "FROM tree ORDER BY parts LIMIT 2000",
+                (auth.principal.sensitivities, auth.principal.sensitivities),
+            ).fetchall()
+        return roots, rows
+
     def listing(self, auth, parent=None, review=False, offset=0):
         auth.require("reviewer" if review else "reader")
         self.project_memories(auth)
@@ -244,6 +277,9 @@ class Library:
         with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             self._lock(c, auth)
             row = self._get(c, auth, node_id, True)
+            if row["kind"] == "folder" and row["parent_id"] is None and row["name"] in {"Skills", "Memories"}:
+                if parent is not None or name != row["name"]:
+                    raise HTTPException(422, "Memories and Skills are fixed top-level workspace folders.")
             self._parent(c, auth, parent)
             if (
                 row["kind"] != "folder"

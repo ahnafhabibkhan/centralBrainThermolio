@@ -156,6 +156,46 @@ def test_web_upload_csrf_preview_and_download(pilot, library):
     assert client.get(url + "/download").content == b"Boiler test"
 
 
+def test_library_navigation_and_markdown_memory_replacements(pilot, library):
+    client = pilot.client
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', client.get('/login').text)[1]
+    client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
+    roots, folders = library.workspace_folders(pilot.auth)
+    assert {'Memories', 'Skills'} == set(roots)
+    assert library.workspace_folders(pilot.auth)[0] == roots
+    page = client.get('/library').text
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
+    assert 'Library navigation' in page and 'account-actions' in page
+    assert 'Main navigation' not in page
+    assert client.get('/skills', follow_redirects=False).headers['location'] == f"/library?folder={roots['Skills']}"
+    data = {'csrf_token': csrf, 'memory_type': 'fact', 'source_reference': 'Test file'}
+    assert client.post('/new', data=data, files={'file': ('bad.txt', b'Fact')}).status_code == 422
+    created = client.post('/new', data=data, files={'file': ('note.md', b'# Test\nDisplay costs in CAD.')}, follow_redirects=False)
+    assert created.status_code == 303
+    url = created.headers['location']
+    download = client.get(url + '/export')
+    assert '.md' in download.headers['content-disposition']
+    assert download.content == b'# Test\nDisplay costs in CAD.'
+    client.post(url + '/approve', data={'csrf_token': csrf})
+    updated = client.post(url + '/edit', data=data, files={'file': ('note.md', b'# Updated\nDisplay costs in CAD with tax.')}, follow_redirects=False)
+    assert updated.status_code == 303
+    assert client.get(url + '/export').content == download.content
+    original_id = url.rsplit('/', 1)[1]
+    from uuid import UUID
+    assert pilot.repo.get(pilot.auth, UUID(original_id)).status == 'active'
+    client.post(updated.headers['location'] + '/approve', data={'csrf_token': csrf})
+    assert pilot.repo.get(pilot.auth, UUID(original_id)).status == 'superseded'
+    uploaded = client.post('/library/upload', data={'csrf_token': csrf, 'parent_id': str(roots['Memories'])},
+                           files={'file': ('folder-note.md', b'Memory from the folder.')}, follow_redirects=False)
+    assert uploaded.status_code == 303 and uploaded.headers['location'].startswith('/review/')
+    assert client.post('/library/upload', data={'csrf_token': csrf, 'parent_id': str(roots['Memories'])},
+                       files={'file': ('bad.pdf', b'Not Markdown')}).status_code == 422
+    skill = library.upload(pilot.auth, 'Procedure.md', b'Check the boiler sequence.', roots['Skills'])
+    assert 'Procedure.md' in client.get('/skills').text
+    assert process_one(library, pilot.auth)
+    assert library.search(pilot.auth, 'boiler', roots['Skills'])['results'][0]['id'] == skill
+
+
 def test_spreadsheet_mcp_bounds_and_sheet_names(pilot,library):
     import io
     wb=Workbook();wb.active.title='Costs'

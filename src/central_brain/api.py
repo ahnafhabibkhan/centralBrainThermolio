@@ -99,6 +99,10 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def boundary(request: Request, call_next):
+        # Some MCP clients remove trailing slashes and do not follow POST redirects.
+        if request.scope["path"] == "/mcp":
+            request.scope["path"] = "/mcp/"
+            request.scope["raw_path"] = b"/mcp/"
         request_id = str(uuid4())
         key = request.client.host if request.client else "unknown"
         auth_marker = None

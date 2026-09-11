@@ -191,18 +191,20 @@ def test_hosted_login_skips_landing_page(pilot):
     assert pilot.client.get('/login?signed_out=true').status_code == 200
 
 
-def test_mcp_tools_and_auth(pilot):
+@pytest.mark.parametrize('endpoint', ['/mcp', '/mcp/'])
+def test_mcp_tools_and_auth(pilot, endpoint):
     c = pilot.client
-    assert c.post('/mcp/').status_code == 401
+    c.follow_redirects = False
+    assert c.post(endpoint).status_code == 401
     h = {**headers('assistant'), 'Accept': 'application/json, text/event-stream'}
-    response = c.post('/mcp/', headers=h, json={'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+    response = c.post(endpoint, headers=h, json={'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
         'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
                    'clientInfo': {'name': 'integration-test', 'version': '1'}}})
     assert response.status_code == 200, response.text
-    response = c.post('/mcp/', headers=h, json={'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
+    response = c.post(endpoint, headers=h, json={'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
     assert {t['name'] for t in response.json()['result']['tools']} == {
         'search_memories', 'propose_memory', 'list_skills', 'get_skill'}
-    response = c.post('/mcp/', headers=h, json={'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+    response = c.post(endpoint, headers=h, json={'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
         'params': {'name': 'propose_memory', 'arguments': {'memory': memory().model_dump(mode='json')}}})
     assert response.status_code == 200, response.text
     assert not response.json()['result'].get('isError'), response.text

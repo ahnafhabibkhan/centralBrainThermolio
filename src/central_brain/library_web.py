@@ -14,6 +14,16 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
     library = Library(repo, settings)
     app.state.library = library
 
+    @app.post('/archive-transfer', include_in_schema=False)
+    async def archive_transfer(request: Request):
+        from .archive_transfer import receive_transfer
+        from starlette.concurrency import run_in_threadpool
+        authorization = request.headers.get('authorization', '')
+        if not authorization.startswith('Bearer '):
+            raise HTTPException(401, 'A scoped upload handoff is required.')
+        result = await run_in_threadpool(receive_transfer, library, settings, authorization[7:], await request.body())
+        return JSONResponse(jsonable_encoder(result), headers={'Cache-Control': 'no-store'})
+
     @app.get("/library/context", include_in_schema=False)
     def workspace_context(request: Request):
         return JSONResponse(jsonable_encoder(library.context(reviewer(request), True)),

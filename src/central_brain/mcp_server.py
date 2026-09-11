@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from .auth import AuthContext
 from .models import MemoryCreate, SearchRequest
 from .archives import ArchiveFile, find_folders, propose_archive
+from .archive_transfer import OriginalManifest, prepare_transfer
 
 current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
@@ -47,6 +48,9 @@ def build_mcp(settings, repo):
             "Transfer actual SVG source as utf8 without rewriting it. Transfer other supported originals as exact base64 bytes "
             "only when the host exposes their contents. Preserve filenames and extensions. Never encode a summary as an original. "
             "Inventory attachments first and clearly identify any that could not be transferred. "
+            "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
+            "Then use your code tool to POST the original bytes directly with the returned short-lived upload token. "
+            "Do not transcribe large base64 strings through model output. The handoff accepts 180 KB of raw originals. "
             "The archive limit is 240 KB per proposal including encoded content. Use a distinct summary_filename when "
             "adding another conversation to an existing folder that already contains summary.md. For larger or inaccessible originals, "
             "ask the user to upload them through Central Brain into the selected folder. Chat-local attachment links "
@@ -164,6 +168,20 @@ def build_mcp(settings, repo):
         in place of original bytes. Report omitted originals. Human approval creates all archive files.
         """
         return propose_archive(library, current_auth.get(), folder_path, summary, source_reference, files, destination_confirmed, summary_filename)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+    def prepare_chat_archive_upload(folder_path: str, summary: str, source_reference: str,
+                                    files: list[OriginalManifest], destination_confirmed: bool = False,
+                                    summary_filename: str = 'summary.md') -> dict:
+        """Prepare a 15-minute, checksum-bound upload handoff for exact original chat attachments.
+
+        Use this when originals are in your code tool's filesystem. Inventory names, byte sizes, and
+        full SHA-256 hashes with code first. Find existing folders and confirm any related destination.
+        Up to 20 originals totaling 180 KB can be sent directly with code to the returned endpoint.
+        No model transcription is needed. Upload success creates a pending archive, never approval.
+        """
+        return prepare_transfer(library, settings, current_auth.get(), folder_path, summary,
+                                source_reference, files, destination_confirmed, summary_filename)
 
     @mcp.tool(annotations=readonly)
     def get_file_info(file_id: str) -> dict:

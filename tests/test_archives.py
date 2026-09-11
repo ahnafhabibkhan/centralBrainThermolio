@@ -15,6 +15,41 @@ from central_brain.library_worker import process_one
 SVG = '<svg xmlns="http://www.w3.org/2000/svg"><title>Thermolio test logo</title><path d="M0 0h10v10z"/></svg>\n'
 
 
+def test_direct_transfer_is_checksum_bound_expiring_and_proposal_only(pilot, library):
+    import hashlib
+    import jwt
+    import time
+    from central_brain.archive_transfer import OriginalManifest, prepare_transfer
+    manifest = [OriginalManifest(name='logo.svg', size_bytes=len(SVG.encode()),
+                                 sha256=hashlib.sha256(SVG.encode()).hexdigest())]
+    handoff = prepare_transfer(library, pilot.settings, pilot.auth, 'Brand/Logo', 'Original logo.', 'Chat', manifest)
+    assert not library.snapshot(pilot.auth)
+    headers = {'Authorization': 'Bearer ' + handoff['upload_token']}
+    body = {'files': [{'name': 'logo.svg', 'encoding': 'base64',
+                       'content': base64.b64encode(SVG.encode()).decode()}]}
+    assert pilot.client.post('/archive-transfer', json=body).status_code == 401
+    bad = {'files': [{'name': 'logo.svg', 'content': '<svg>wrong</svg>'}]}
+    assert pilot.client.post('/archive-transfer', headers=headers, json=bad).status_code == 422
+    claims = jwt.decode(handoff['upload_token'], pilot.settings.session_secret, algorithms=['HS256'],
+                        audience=pilot.settings.public_url)
+    assert set(claims['principal']['roles']) == {'reader', 'writer'}
+    claims['exp'] = int(time.time()) - 1
+    expired = jwt.encode(claims, pilot.settings.session_secret, algorithm='HS256')
+    assert pilot.client.post('/archive-transfer', headers={'Authorization': 'Bearer ' + expired}, json=body).status_code == 401
+    response = pilot.client.post('/archive-transfer', headers=headers, json=body)
+    assert response.status_code == 200 and response.json()['status'] == 'proposed'
+    assert pilot.client.post('/archive-transfer', headers=headers, json=body).json()['duplicate']
+    assert not library.snapshot(pilot.auth)
+    sid = UUID(response.json()['id'])
+    approve_batch(library, pilot.auth, selection(library, pilot.auth, [('suggestion', sid)]))
+    node = next(n for n in library.snapshot(pilot.auth) if n['name'] == 'logo.svg')
+    # Both Library instances use the same configured original store.
+    with library.download(pilot.auth, node['id'])[1] as stream:
+        assert stream.read() == SVG.encode()
+    pilot.settings.central_brain_principals_json = '{}'
+    assert pilot.client.post('/archive-transfer', headers=headers, json=body).status_code == 403
+
+
 def selection(lib, auth, entries):
     with lib.repo._connection(auth) as c:
         return [approval_item(lib, auth, c, kind, uid) for kind, uid in entries]

@@ -7,8 +7,12 @@
 <p id="workspace-status" class="hint" role="status" aria-live="polite"></p>
 <div class="knowledge-browser">
 <aside class="hierarchy-panel" aria-label="Folder hierarchy"><h2>Folder structure</h2><div id="folder-tree">
-{% macro branch(items) %}<ul class="folder-branches">{% for item in items %}<li>{% if item.kind=='folder' %}<details data-tree-id="{{ item.id }}"><summary data-folder="{{ item.id }}"><span class="folder-mark" aria-hidden="true"></span><span>{{ item.name }}</span><small>{{ item.children|length }}</small></summary>{{ branch(item.children) }}{% if not item.children %}<p class="tree-empty">This folder is empty.</p>{% endif %}</details>{% else %}<a class="tree-file" href="/library/file/{{ item.id }}"><span class="file-mark" aria-hidden="true"></span>{{ item.name }}{% if item.status=='proposed' %}<small>Pending</small>{% endif %}</a>{% endif %}</li>{% endfor %}</ul>{% endmacro %}
-<details data-tree-id="root" open><summary data-folder=""><span class="folder-mark" aria-hidden="true"></span>Workspace</summary>{{ branch(hierarchy) }}</details>
+{% macro branch(items) %}<ul class="folder-branches">{% for item in items %}<li>{% if item.kind=='folder' %}
+<div class="tree-branch" data-tree-id="{{ item.id }}">
+  <div class="tree-row"><button type="button" class="tree-toggle" data-folder-name="{{ item.name }}" aria-label="Expand {{ item.name }}" aria-expanded="false" aria-controls="children-{{ item.id }}"><span aria-hidden="true">›</span></button><a class="tree-folder" data-folder="{{ item.id }}" href="/library?folder={{ item.id }}"><span class="folder-mark" aria-hidden="true"></span><span>{{ item.name }}</span><small>{{ item.children|length }}</small></a></div>
+  <div class="tree-children" id="children-{{ item.id }}" inert><div>{{ branch(item.children) }}{% if not item.children %}<p class="tree-empty">This folder is empty.</p>{% endif %}</div></div>
+</div>{% else %}<a class="tree-file" href="/library/file/{{ item.id }}"><span class="file-mark" aria-hidden="true"></span>{{ item.name }}{% if item.status=='proposed' %}<small>Pending</small>{% endif %}</a>{% endif %}</li>{% endfor %}</ul>{% endmacro %}
+<div class="tree-branch expanded" data-tree-id="root"><div class="tree-row"><button type="button" class="tree-toggle" data-folder-name="Workspace" aria-label="Collapse Workspace" aria-expanded="true" aria-controls="children-root"><span aria-hidden="true">›</span></button><a class="tree-folder" data-folder="" href="/library"><span class="folder-mark" aria-hidden="true"></span><span>Workspace</span></a></div><div class="tree-children" id="children-root"><div>{{ branch(hierarchy) }}</div></div></div>
 </div></aside>
 <section id="folder-content" class="folder-content" aria-label="Selected folder">
 <div class="folder-heading"><div><p class="eyebrow">{{ section|upper if section else 'DOCUMENTS' }}</p><h2>{{ folder.name if folder else 'Workspace' }}</h2><p class="hint">{{ folder.path if folder else '/' }}</p></div>{% if folder %}<a class="button small" href="/library/file/{{ folder.id }}">Folder settings</a>{% endif %}</div>
@@ -27,5 +31,5 @@
 <p class="hint">{{ (usage.used / 1048576)|round(1) }} MB of {{ (usage.limit / 1073741824)|round(1) }} GB used, including versions.</p>
 </section></div>
 <dialog id="workspace-dialog" aria-labelledby="dialog-title"><div class="dialog-toolbar"><h2 id="dialog-title">Workspace details</h2><button type="button" id="close-dialog" aria-label="Close details">Close</button></div><div id="dialog-content"></div><p id="dialog-status" role="status"></p></dialog>
-</div><script src="/static/library.js?v=workspace-v2-20260911" defer></script>
+</div><script src="/static/library.js?v=mobile-v1-20260911" defer></script>
 {% endblock %}

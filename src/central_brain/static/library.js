@@ -32,13 +32,22 @@
     }
     return {doc, url: response.url};
   }
-  function selectedTree() {
+  function expandBranch(branch, expanded) {
+    branch.classList.toggle('expanded', expanded);
+    const toggle = branch.querySelector(':scope > .tree-row > .tree-toggle');
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${toggle.dataset.folderName}`);
+    branch.querySelector(':scope > .tree-children').inert = !expanded;
+  }
+  function selectedTree(reveal = false) {
     document.querySelectorAll('#folder-tree [data-folder]').forEach(item => {
       item.classList.toggle('selected-folder', item.dataset.folder === selected);
-      if (item.dataset.folder === selected) {
+      if (item.dataset.folder === selected) item.setAttribute('aria-current', 'location');
+      else item.removeAttribute('aria-current');
+      if (reveal && item.dataset.folder === selected) {
         let parent = item.parentElement;
         while (parent && parent.id !== 'folder-tree') {
-          if (parent.tagName === 'DETAILS') parent.open = true;
+          if (parent.matches('.tree-branch')) expandBranch(parent, true);
           parent = parent.parentElement;
         }
       }
@@ -50,11 +59,14 @@
   }
   async function refresh(includeFolder = true) {
     const requestedFolder = selected;
-    const open = new Set([...document.querySelectorAll('#folder-tree details[open]')].map(d => d.dataset.treeId));
     const {doc} = await html(folderURL());
     if (selected !== requestedFolder) return;
+    // Capture the latest disclosure state, including clicks while the fetch was pending.
+    const open = new Set([...document.querySelectorAll('#folder-tree .tree-branch.expanded')].map(d => d.dataset.treeId));
+    const focusedToggle = document.activeElement?.closest('.tree-toggle')?.closest('.tree-branch')?.dataset.treeId;
     for (const id of ['approvals', 'context-strip', 'folder-tree']) replaceRegion(id, doc);
-    document.querySelectorAll('#folder-tree details').forEach(d => { d.open = open.has(d.dataset.treeId); });
+    document.querySelectorAll('#folder-tree .tree-branch').forEach(d => expandBranch(d, open.has(d.dataset.treeId)));
+    if (focusedToggle) document.querySelector(`#folder-tree [data-tree-id="${CSS.escape(focusedToggle)}"] .tree-toggle`)?.focus({preventScroll: true});
     if (includeFolder && !dirty) replaceRegion('folder-content', doc);
     revision = doc.getElementById('library-app').dataset.revision;
     selectedTree();
@@ -67,8 +79,14 @@
     selected = id;
     dirty = false;
     replaceRegion('folder-content', doc);
-    selectedTree();
+    selectedTree(true);
     if (dialog.open) dialog.close();
+    if (matchMedia('(max-width: 800px)').matches) {
+      document.getElementById('folder-content').scrollIntoView({
+        behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+        block: 'start'
+      });
+    }
     message('');
   }
   function showDetails(doc, url) {
@@ -96,14 +114,16 @@
     if (event.target.closest('#folder-content form')) dirty = true;
   });
   document.addEventListener('click', event => {
-    const folder = event.target.closest('summary[data-folder],a[data-folder],button[data-folder]');
+    const toggle = event.target.closest('.tree-toggle');
+    if (toggle) {
+      const branch = toggle.closest('.tree-branch');
+      expandBranch(branch, toggle.getAttribute('aria-expanded') !== 'true');
+      return;
+    }
+    const folder = event.target.closest('a[data-folder],button[data-folder]');
     if (folder && !event.ctrlKey && !event.metaKey) {
-      if (folder.tagName !== 'SUMMARY') event.preventDefault();
-      // Native summary controls still expand and collapse the tree.
-      const wasOpen = folder.tagName === 'SUMMARY' && folder.parentElement.open;
-      if (!wasOpen || selected !== folder.dataset.folder) {
-        openFolder(folder.dataset.folder).catch(error => message(error.message, true));
-      }
+      event.preventDefault();
+      openFolder(folder.dataset.folder).catch(error => message(error.message, true));
       return;
     }
     const link = event.target.closest('a[href]');
@@ -187,5 +207,5 @@
       if (ownsBusy) busy = false;
     }
   }, 20000);
-  selectedTree();
+  selectedTree(true);
 })();

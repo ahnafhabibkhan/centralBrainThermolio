@@ -2,6 +2,10 @@
 
 The signed-in Library now operates on one page. Expanding folders reveals nested files with connecting branch lines. Selecting a folder updates its contents in place. File details, memory history, editing and Getting started open in a dialog. Sign out remains in the header.
 
+Folder arrows only expand or collapse the hierarchy. Folder names select and reveal their contents. Selecting another folder, approving a proposal, or receiving a background update does not reopen a branch that the user collapsed. The arrows support Enter and Space, expose their expanded state to assistive technology, and exclude collapsed descendants from keyboard navigation. The short expansion and collapse transition respects the device's reduced-motion preference.
+
+On screens up to 800 pixels wide, the folder hierarchy sits above the content panel with larger touch controls. Selecting a folder brings its content into view without navigating away. On phones up to 600 pixels wide, approval and file rows stack with their actions and metadata, long names wrap, and detail dialogs fit the viewport. Getting started and Sign out remain in the header. Forms use 16-pixel text and controls at least 44 pixels high on mobile.
+
 The approvals table is always present, including when its queue is empty. It shows accessible proposed files, memories and organization changes across the workspace, rather than only the selected folder. Uploaded human documents become available immediately. Assistant proposals still require approval.
 
 Markdown files under Skills are discoverable through both the library tools and list_skills/get_skill. For old approved root files named SKILL.md or ending in _SKILL.md, folder initialization moves them into Skills when the destination has no naming collision. Approval also applies this convention. Other procedures can be uploaded directly into Skills. Classification follows the filename and folder, rather than using a paid AI classifier.

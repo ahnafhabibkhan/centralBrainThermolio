@@ -260,6 +260,7 @@ dialog::backdrop { background:#22222266; }
 
 /* Long names and paths stay inside their panel at every viewport size. */
 .folder-heading>div { min-width:0; }
+.folder-heading>.folder-up { display:none; }
 .folder-heading h2,.folder-heading .hint,.file-table td,.approval-table td,
 .search-results,.card,#dialog-content { overflow-wrap:anywhere; }
 .file-table table { table-layout:fixed; }
@@ -272,6 +273,12 @@ dialog::backdrop { background:#22222266; }
 dialog { max-height:90dvh; overscroll-behavior:contain; }
 .dialog-toolbar { position:sticky; top:-24px; background:#fff; z-index:1; padding-top:12px; }
 @media(max-width:800px) {
+  .folder-heading { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"up settings" "title title"; gap:12px; }
+  .folder-heading>.folder-up { display:inline-flex; grid-area:up; justify-self:start; gap:8px; padding:8px 12px; }
+  .folder-up:hover { background:#f1f2f3; border-color:#b8bdc2; }
+  .folder-title { grid-area:title; }
+  .folder-settings { grid-area:settings; justify-self:end; }
+  .folder-heading:not(:has(.folder-up)) { grid-template-areas:"title title"; }
   .tree-toggle { flex-basis:44px; width:44px; min-height:44px; }
   .tree-folder,.tree-file { min-height:44px; }
   .folder-branches { padding-left:16px; margin-left:8px; }

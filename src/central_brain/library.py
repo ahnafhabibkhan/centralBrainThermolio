@@ -258,7 +258,12 @@ class Library:
             ).fetchall()
             suggestions = c.execute("SELECT id,action,payload,status FROM central_brain.library_suggestions "
                                     "WHERE status='proposed' ORDER BY id").fetchall() if review else []
-        stable = json.dumps({"nodes": nodes, "registered": registered, "suggestions": suggestions}, default=str,
+            deletions = c.execute("SELECT id,name,nullif(path,'') AS path,kind,deleted_at FROM central_brain.library_deletions "
+                                  "WHERE sensitivity=ANY(%s) AND (original_status='active' OR %s) "
+                                  "AND deleted_at>now()-interval '30 days' ORDER BY deleted_at DESC,id LIMIT 21",
+                                  (auth.principal.sensitivities, review)).fetchall()
+        stable = json.dumps({"nodes": nodes, "registered": registered, "suggestions": suggestions,
+                             "deletions": deletions}, default=str,
                             sort_keys=True, separators=(",", ":"))
         active = [n for n in nodes if n["status"] == "active"]
         return {
@@ -276,6 +281,10 @@ class Library:
                               "version": n["version"], "state": n["state"], "category": n["category"]}
                              for n in sorted(active, key=lambda n: n["changed_at"], reverse=True)
                              if n["kind"] != "folder"][:8],
+            "recent_deletions": [{**d, 'id': str(d['id']), 'deleted_at': d['deleted_at'].isoformat(),
+                                  'path': d['path'][:300] if d['path'] else None} for d in deletions[:20]],
+            "deletions_truncated": len(deletions) > 20,
+            "deletion_window_days": 30,
             "truncated": len(nodes) > 2000 or sum(n["kind"] == "folder" for n in active) > 40,
             "reference_material": True,
         }
@@ -342,6 +351,76 @@ class Library:
             "limit": self.settings.library_quota_bytes,
             "file_limit": self.settings.library_file_bytes,
         }
+
+    def _deletion_plan(self, c, auth, node_id):
+        auth.require('admin')
+        root = self._get(c, auth, node_id, True)
+        if root['kind'] == 'folder' and root['parent_id'] is None and root['name'] in {'Memories', 'Skills'}:
+            raise HTTPException(422, 'Memories and Skills are permanent workspace folders. You can delete their contents.')
+        rows = c.execute('''WITH RECURSIVE subtree AS (
+            SELECT n.*,ARRAY[n.name] AS parts FROM central_brain.library_nodes n WHERE id=%s
+            UNION ALL SELECT n.*,s.parts||n.name FROM central_brain.library_nodes n
+            JOIN subtree s ON n.parent_id=s.id
+        ) SELECT * FROM subtree ORDER BY id''', (node_id,)).fetchall()
+        if any(r['sensitivity'] not in auth.principal.sensitivities for r in rows):
+            raise HTTPException(403, 'This folder contains items outside your access. Nothing was deleted.')
+        ids = [r['id'] for r in rows]
+        versions = c.execute('SELECT id,node_id,version,size,sha256,object_key FROM central_brain.library_versions '
+                             'WHERE node_id=ANY(%s) ORDER BY id', (ids,)).fetchall()
+        memories = c.execute('SELECT id,status,deleted_at,md5(content||source::text||metadata::text) AS fingerprint '
+                             'FROM central_brain.memories WHERE id=ANY(%s) ORDER BY id FOR UPDATE',
+                             ([r['memory_id'] for r in rows if r['memory_id']],)).fetchall()
+        path = self.path(auth, node_id)
+        fingerprint = hashlib.sha256(json.dumps([path, rows, versions, memories], default=str, sort_keys=True).encode()).hexdigest()
+        return {'root': root, 'path': path, 'rows': rows, 'versions': versions, 'memories': memories, 'token': fingerprint,
+                'counts': {kind: sum(r['kind'] == kind for r in rows) for kind in ('folder','file','memory')},
+                'version_count': len(versions), 'bytes': sum(v['size'] for v in versions)}
+
+    def deletion_plan(self, auth, node_id):
+        with self.repo._connection(auth) as c:
+            self._lock(c, auth)
+            plan = self._deletion_plan(c, auth, node_id)
+        return plan
+
+    def delete(self, auth, node_id, confirmation, token):
+        from psycopg.errors import ForeignKeyViolation
+        auth.require('admin')
+        try:
+            with self.repo._connection(auth) as c:
+                self._lock(c, auth)
+                plan = self._deletion_plan(c, auth, node_id)
+                path = plan['path']
+                if confirmation != plan['root']['name']:
+                    raise HTTPException(422, 'Type the exact item name to confirm deletion.')
+                if token != plan['token']:
+                    raise HTTPException(409, 'These items changed since you opened the warning. Reopen Delete to review the latest contents.')
+                ids = [r['id'] for r in plan['rows']]
+                memory_status = {m['id']: m['status'] for m in plan['memories']}
+                for row in plan['rows']:
+                    keys = [v['object_key'] for v in plan['versions'] if v['node_id'] == row['id']]
+                    item_path = path + ('/' + '/'.join(row['parts'][1:]) if len(row['parts']) > 1 else '')
+                    c.execute('''INSERT INTO central_brain.library_deletions
+                        (id,workspace_id,created_by,visibility,sensitivity,name,path,kind,original_status,deleted_by,object_keys)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',
+                        (row['id'], row['workspace_id'], row['created_by'], row['visibility'], row['sensitivity'],
+                         row['name'], item_path, row['kind'], memory_status.get(row['memory_id'], row['status']),
+                         auth.principal.actor_id, Jsonb(keys)))
+                    if row['memory_id']:
+                        c.execute("UPDATE central_brain.memories SET content='[Deleted]',source='{}',metadata='{}',"
+                                  "subject_ref=NULL,confidence=NULL,dedupe_key=NULL,status='archived',deleted_at=now() WHERE id=%s",
+                                  (row['memory_id'],))
+                    self._audit(c, auth, 'library.delete', row['id'])
+                c.execute('DELETE FROM central_brain.library_sections WHERE version_id IN '
+                          '(SELECT id FROM central_brain.library_versions WHERE node_id=ANY(%s))', (ids,))
+                c.execute('DELETE FROM central_brain.library_versions WHERE node_id=ANY(%s)', (ids,))
+                # The foreign key also protects descendants hidden by row-level access rules.
+                c.execute('DELETE FROM central_brain.library_nodes WHERE id=ANY(%s)', (ids,))
+                c.execute("UPDATE central_brain.library_suggestions SET status='cancelled' WHERE status='proposed' "
+                          "AND (payload->>'node_id'=ANY(%s) OR payload->>'parent_id'=ANY(%s))",
+                          ([str(i) for i in ids], [str(i) for i in ids]))
+                return plan['root']['parent_id']
+        except ForeignKeyViolation:
+            raise HTTPException(409, 'This folder contains items that cannot be deleted with your access. Nothing was deleted.') from None
 
     def folder(self, auth, name, parent=None, connection=None):
         auth.require("reviewer")

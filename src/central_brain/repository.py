@@ -30,7 +30,7 @@ class PostgresMemoryRepository:
     def ready(self):
         with self.pool.connection() as connection:
             return bool(connection.execute(
-                "SELECT version FROM central_brain.schema_migrations WHERE version='004_library'"
+                "SELECT version FROM central_brain.schema_migrations WHERE version='005_library_deletions'"
             ).fetchone())
 
     @contextmanager
@@ -159,6 +159,11 @@ class PostgresMemoryRepository:
         with self._connection(auth) as connection:
             row = self._not_found(self._get(connection, auth, memory_id, lock=True))
             if action == "delete":
+                connection.execute('''INSERT INTO central_brain.library_deletions
+                    (id,workspace_id,created_by,visibility,sensitivity,name,path,kind,original_status,deleted_by)
+                    SELECT id,workspace_id,created_by,visibility,sensitivity,name,'',kind,%s,%s
+                    FROM central_brain.library_nodes WHERE memory_id=%s ON CONFLICT DO NOTHING''',
+                    (row['status'], auth.principal.actor_id, memory_id))
                 # Purge content while retaining IDs needed by revision and audit references.
                 connection.execute(
                     """UPDATE central_brain.memories SET content='[Deleted]', source='{}',

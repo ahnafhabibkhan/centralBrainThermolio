@@ -9,6 +9,7 @@
   let folderRequest = 0;
   let dialogRequest = 0;
   let dirty = false;
+  let detailResource = null;
   const parser = new DOMParser();
   history.replaceState(null, '', '/library');
 
@@ -28,7 +29,9 @@
     if (!response.ok) {
       let detail = doc.querySelector('main')?.textContent?.trim();
       if (!detail) { try { detail = JSON.parse(body).detail; } catch (_) {} }
-      throw new Error(typeof detail === 'string' ? detail.slice(0, 600) : 'The request failed. Please try again.');
+      const error = new Error(typeof detail === 'string' ? detail.slice(0, 600) : 'The request failed. Please try again.');
+      error.status = response.status;
+      throw error;
     }
     return {doc, url: response.url};
   }
@@ -59,8 +62,17 @@
   }
   async function refresh(includeFolder = true) {
     const requestedFolder = selected;
-    const {doc} = await html(folderURL());
+    let result;
+    let missingFolder = false;
+    try { result = await html(folderURL()); }
+    catch (error) {
+      if (error.status !== 404 || !requestedFolder) throw error;
+      result = await html('/library');
+      missingFolder = true;
+    }
     if (selected !== requestedFolder) return;
+    const {doc} = result;
+    if (missingFolder) { selected = ''; dirty = false; includeFolder = true; }
     // Capture the latest disclosure state, including clicks while the fetch was pending.
     const open = new Set([...document.querySelectorAll('#folder-tree .tree-branch.expanded')].map(d => d.dataset.treeId));
     const focusedToggle = document.activeElement?.closest('.tree-toggle')?.closest('.tree-branch')?.dataset.treeId;
@@ -70,6 +82,12 @@
     if (includeFolder && !dirty) replaceRegion('folder-content', doc);
     revision = doc.getElementById('library-app').dataset.revision;
     selectedTree();
+    if (dialog.open && detailResource && !document.querySelector(
+      `#folder-tree a[href="/library/file/${detailResource}"],#folder-tree [data-folder="${detailResource}"]`)) {
+      dialog.close();
+      ++dialogRequest;
+    }
+    return missingFolder;
   }
   async function openFolder(id, url) {
     if (busy) return;
@@ -90,6 +108,7 @@
     message('');
   }
   function showDetails(doc, url) {
+    detailResource = new URL(url).pathname.match(/^\/(?:library\/file|review)\/([0-9a-f-]{36})(?:\/|$)/)?.[1] || null;
     const main = doc.querySelector('main');
     if (!main) throw new Error('Details could not be loaded.');
     main.querySelectorAll('script').forEach(script => script.remove());
@@ -171,6 +190,11 @@
     message('Saving your changes.');
     try {
       const result = await html(action, {method: 'POST', body: data});
+      const deleting = /^\/library\/file\/[0-9a-f-]+\/delete$/.test(new URL(action).pathname);
+      if (deleting && result.doc.getElementById('library-app')) {
+        selected = result.doc.getElementById('library-app').dataset.folder || '';
+        ++folderRequest;
+      }
       dirty = false;
       await refresh(true);
       if (result.doc.getElementById('library-app')) {
@@ -178,7 +202,8 @@
       } else {
         showDetails(result.doc, result.url);
       }
-      message('Saved. The workspace context has been updated.');
+      message(deleting ? 'Deleted. Workspace context is updated, and original files are queued for permanent removal.'
+                       : 'Saved. The workspace context has been updated.');
     } catch (error) {
       message(error.message, true);
     } finally {
@@ -198,8 +223,9 @@
       if (context.revision !== revision) {
         busy = true;
         ownsBusy = true;
-        await refresh(!dirty);
-        message(dirty ? 'Context updated. Finish your form to refresh the file list.' : 'Context updated with the latest changes.');
+        const missingFolder = await refresh(!dirty);
+        message(missingFolder ? 'That folder is no longer available. Showing Workspace.'
+          : dirty ? 'Context updated. Finish your form to refresh the file list.' : 'Context updated with the latest changes.');
       }
     } catch (error) {
       message('Live updates are temporarily unavailable. Your current work is still open.');

@@ -159,6 +159,19 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe="")},
         )
 
+    @app.get('/library/file/{node_id}/delete', include_in_schema=False)
+    def delete_warning(request: Request, node_id: UUID):
+        plan = library.deletion_plan(reviewer(request), node_id)
+        return page(request, 'delete.html', title='Confirm deletion', plan=plan)
+
+    @app.post('/library/file/{node_id}/delete', include_in_schema=False)
+    def delete_item(request: Request, node_id: UUID, confirmation: str = Form(...),
+                    plan_token: str = Form(...), csrf_token: str = Form(...)):
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        parent = library.delete(auth, node_id, confirmation, plan_token)
+        return RedirectResponse('/library' + (f'?folder={parent}' if parent else ''), 303)
+
     @app.post("/library/file/{node_id}/move", include_in_schema=False)
     def move(
         request: Request,

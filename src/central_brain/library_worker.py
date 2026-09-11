@@ -12,6 +12,26 @@ from .library import Library
 from .repository import PostgresMemoryRepository
 
 
+def purge_one(library, auth):
+    """Retry original-object deletion after the database removal has committed."""
+    from psycopg.types.json import Jsonb
+    with library.repo._connection(auth) as c:
+        row = c.execute('SELECT id,object_keys FROM central_brain.library_deletions WHERE purged_at IS NULL '
+                        'ORDER BY deleted_at LIMIT 1 FOR UPDATE SKIP LOCKED').fetchone()
+        if not row:
+            c.execute("DELETE FROM central_brain.library_deletions WHERE purged_at IS NOT NULL "
+                      "AND deleted_at<now()-interval '30 days'")
+            return False
+        keys = row['object_keys']
+        if keys:
+            library.store.delete(keys[0])
+            keys = keys[1:]
+        c.execute('UPDATE central_brain.library_deletions SET object_keys=%s, '
+                  'purged_at=CASE WHEN %s THEN now() ELSE NULL END WHERE id=%s',
+                  (Jsonb(keys), not keys, row['id']))
+    return True
+
+
 def process_one(library, auth):
     with library.repo._connection(auth) as c:
         job = c.execute(
@@ -65,6 +85,8 @@ def process_one(library, auth):
         )
     with library.repo._connection(auth) as c:
         library._lock(c, auth)
+        if not c.execute('SELECT id FROM central_brain.library_versions WHERE id=%s', (job['id'],)).fetchone():
+            return True
         c.execute("DELETE FROM central_brain.library_sections WHERE version_id=%s", (job["id"],))
         available = (
             20000000
@@ -111,6 +133,7 @@ def main():
             busy = False
             for principal in unique.values():
                 try:
+                    busy = purge_one(library, AuthContext(principal)) or busy
                     busy = process_one(library, AuthContext(principal)) or busy
                 except Exception:
                     logging.exception("Library queue unavailable")

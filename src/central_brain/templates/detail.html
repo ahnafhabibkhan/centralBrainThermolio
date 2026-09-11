@@ -11,6 +11,5 @@
 <form method="post" action="/review/{{ memory.id }}/reject"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button>Reject</button></form>{% endif %}
 {% if memory.status in ['active','proposed'] %}<a class="button" href="/review/{{ memory.id }}/edit">Upload replacement .md</a>{% endif %}
 <a class="button quiet" href="/review/{{ memory.id }}/export">Download .md</a></div></article>
-<details class="delete-box"><summary>Delete this memory</summary><p>This removes the stored content. Minimal audit and revision identifiers remain. Existing backups expire on their retention schedule.</p>
-<form method="post" action="/review/{{ memory.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="danger">Delete stored content</button></form></details>
+{% if can_delete %}<p><a class="button danger" href="/library/file/{{ memory.id }}/delete">Delete this memory</a></p>{% endif %}
 {% endblock %}

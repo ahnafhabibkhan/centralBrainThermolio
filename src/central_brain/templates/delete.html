@@ -1,0 +1,19 @@
+{% extends 'base.html' %}{% block content %}
+<p class="eyebrow">CONFIRM DELETION</p><h1>Delete {{ plan.root.name }}?</h1>
+<p class="source">{{ plan.path }}</p>
+<section class="delete-warning" aria-label="Deletion warning">
+<h2>This cannot be undone in Central Brain.</h2>
+<p>{% if plan.root.kind=='folder' %}This removes the folder and everything inside it, including nested folders and pending proposals.{% else %}This removes the item and all its stored file versions.{% endif %}</p>
+<p><strong>{{ plan.counts.folder }} folders, {{ plan.counts.file }} files, and {{ plan.counts.memory }} memories</strong> will be removed. This includes {{ plan.version_count }} original file versions ({{ (plan.bytes/1048576)|round(2) }} MB).</p>
+<p>These items disappear from search, skills, and assistant retrieval immediately. Stored originals are queued for permanent removal. Deletion metadata stays in context for 30 days. Minimal audit records and existing backups follow their retention rules.</p>
+<p>Copies already downloaded or included in a ChatGPT or Claude conversation are outside this deletion.</p>
+{% if plan.root.kind=='folder' %}<p>Deletion is all or nothing. If the folder contains an item outside your access, nothing will be deleted.</p>{% endif %}
+</section>
+{% if plan.root.kind=='folder' %}<details class="card"><summary>Review the affected items ({{ plan.rows|length }})</summary><ul class="delete-inventory">{% for row in plan.rows[:30] %}<li>{{ '/'.join(row.parts) }} <span class="hint">({{ row.kind }})</span></li>{% endfor %}</ul>{% if plan.rows|length>30 %}<p class="hint">The first 30 items are shown. All {{ plan.rows|length }} items are included in this deletion.</p>{% endif %}</details>{% endif %}
+<form method="post" action="/library/file/{{ plan.root.id }}/delete" class="card">
+<input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="plan_token" value="{{ plan.token }}">
+<label for="confirm-delete">Type <strong>{{ plan.root.name }}</strong> to confirm.</label>
+<input id="confirm-delete" name="confirmation" required autocomplete="off" spellcheck="false" maxlength="240" aria-describedby="delete-confirm-help">
+<p id="delete-confirm-help" class="hint">If the contents change before you confirm, deletion will stop so you can review them again.</p>
+<div class="actions"><a class="button" href="/library/file/{{ plan.root.id }}">Cancel</a><button class="destructive">Delete permanently</button></div>
+</form>{% endblock %}

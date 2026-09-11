@@ -29,6 +29,15 @@ def build_mcp(settings, repo):
             "No background conversation capture or automatic synchronization is provided. "
             "Call get_workspace_context at the start of a relevant task and again when checking for updates. "
             "Its revision changes with accessible files, memories, approvals and indexing state. "
+            "Check recent_deletions and stop citing or reusing those item IDs. The deletion list is bounded; "
+            "when a revision changes, search again before relying on cached files. Previously returned chat text cannot be recalled. "
+            "When the user asks to store a chat, agree a project and chat topic, inspect existing folders, "
+            "and propose a folder under Projects/<project>/Chats/<date-topic>. Reuse an existing destination. "
+            "Propose summary.md and separate named text documents with their chat source references. "
+            "New folders require approval before files can be proposed into them. A summary is not an original attachment. "
+            "Only .md and .txt content can be proposed by the current file tool; direct the user to the website "
+            "to upload original PDFs, Word files, spreadsheets, or other supported binary files. "
+            "Never claim to have copied chat attachments that were not transferred. "
             "Use search_library for questions about project documents, skills and memories. Search first, "
             "then read only relevant file sections. List folders when the destination is unclear. "
             "Cite returned file paths, versions and locations. Extraction can be partial; never "
@@ -115,7 +124,7 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=readonly)
     def get_workspace_context() -> dict:
-        """Get current approved workspace counts, folder paths, recent files and a change revision."""
+        """Get current approved workspace context, a revision, and recent access-filtered deletion notices."""
         return library.context(current_auth.get())
 
     @mcp.tool(annotations=readonly)

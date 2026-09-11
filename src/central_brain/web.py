@@ -83,7 +83,7 @@ def install_web(app, settings, repo):
             auth = reviewer(request)
             app.state.library.project_memories(auth)
             roots, tree = app.state.library.workspace_folders(auth)
-            context.update(library_roots=roots, folder_tree=tree)
+            context.update(library_roots=roots, folder_tree=tree, can_delete='admin' in auth.principal.roles)
         return templates.TemplateResponse(request=request, name=template, context={
             "csrf": csrf(request), "local": settings.environment == "local", **context,
         })

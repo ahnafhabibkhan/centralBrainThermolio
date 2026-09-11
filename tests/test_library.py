@@ -167,6 +167,10 @@ def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
     assert 'Library navigation' in page and 'account-actions' in page
     assert 'Main navigation' not in page
+    assert page.count('href="/library"') >= 1
+    sidebar = page.split('<aside class="folder-sidebar">', 1)[1].split('</aside>', 1)[0]
+    assert 'Memories' not in sidebar and 'Skills' not in sidebar
+    assert '▣ Memories' in page and '▣ Skills' in page
     assert client.get('/skills', follow_redirects=False).headers['location'] == f"/library?folder={roots['Skills']}"
     data = {'csrf_token': csrf, 'memory_type': 'fact', 'source_reference': 'Test file'}
     assert client.post('/new', data=data, files={'file': ('bad.txt', b'Fact')}).status_code == 422
@@ -194,6 +198,10 @@ def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     assert 'Procedure.md' in client.get('/skills').text
     assert process_one(library, pilot.auth)
     assert library.search(pilot.auth, 'boiler', roots['Skills'])['results'][0]['id'] == skill
+    proposed = library.upload(pilot.auth, 'Humanizer.md', b'Improve the writing.', roots['Skills'], proposed=True)
+    skill_page = client.get('/skills').text
+    assert skill_page.index('Review pending changes') < skill_page.index('Upload an original')
+    assert 'New skill: Humanizer.md' in skill_page
 
 
 def test_spreadsheet_mcp_bounds_and_sheet_names(pilot,library):

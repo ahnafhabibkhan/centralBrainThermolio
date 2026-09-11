@@ -11,7 +11,7 @@
   {% if request.session.get('sid') %}<div class="account-actions"><a href="/getting-started">Getting started</a>
     <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="quiet">Sign out</button></form>
   </div>{% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}</header>
-  {% if folder_tree is defined %}<div class="workspace-layout"><aside class="folder-sidebar"><nav aria-label="Library navigation"><a class="library-home" href="/library">Library</a><p class="eyebrow">FOLDERS</p><a href="/library">All files</a>{% for entry in folder_tree %}<a style="padding-left:{{ 12 + entry.depth * 14 }}px" href="/library?folder={{ entry.id }}" {% if request.query_params.get('folder')==entry.id|string %}aria-current="page"{% endif %} title="{{ entry.path }}">▣ {{ entry.name }}</a>{% endfor %}<hr><a href="/?view=proposed">Memory review</a><a href="/new">Upload a memory</a></nav></aside>{% endif %}
+  {% if folder_tree is defined %}<div class="workspace-layout"><aside class="folder-sidebar"><nav aria-label="Library navigation"><p class="eyebrow">LIBRARY</p><a class="library-home" href="/library" {% if request.url.path=='/library' and not request.query_params.get('folder') %}aria-current="page"{% endif %}>All files</a></nav></aside>{% endif %}
   <main id="main">{% block content %}{% endblock %}</main>{% if folder_tree is defined %}</div>{% endif %}
   <footer><span>Thermolio · Internal use only</span><a href="/getting-started">Getting started</a><span class="environment">{% if local %}Local preview{% else %}Restricted access{% endif %}</span></footer>
 </body></html>

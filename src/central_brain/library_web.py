@@ -28,6 +28,10 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             suggestions = c.execute(
                 "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' ORDER BY created_at LIMIT 50"
             ).fetchall()
+        suggestions = [dict(item) for item in suggestions]
+        for suggestion in suggestions:
+            parent_id = suggestion["payload"].get("parent_id")
+            suggestion["destination"] = library.path(auth, UUID(parent_id)) if parent_id else "All files"
         return page(
             request,
             "library.html",
@@ -41,6 +45,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             query=q,
             results=library.search(auth, q, folder)["results"] if q.strip() else [],
             suggestions=suggestions,
+            pending_files=[row for row in rows if row["status"] == "proposed"],
         )
 
     @app.post("/library/folders", include_in_schema=False)

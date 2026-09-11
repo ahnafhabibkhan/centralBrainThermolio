@@ -559,7 +559,7 @@ class Library:
                 "SELECT coalesce(sum(size),0) AS used FROM central_brain.library_versions"
             ).fetchone()["used"]
             if used + len(data) > self.settings.library_quota_bytes:
-                raise HTTPException(413, "The 1 GB library quota includes all versions.")
+                raise HTTPException(413, "The shared file storage limit has been reached. All stored versions count toward the limit.")
             version = 1
             if node_id:
                 row = self._get(c, auth, node_id, True)

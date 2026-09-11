@@ -51,6 +51,7 @@ services:
       OAUTH_WEB_CLIENT_ID: ${OAUTH_WEB_CLIENT_ID:?Set the review client ID}
       OAUTH_WEB_CLIENT_SECRET: ${OAUTH_WEB_CLIENT_SECRET:?Set the review client secret}
       LIBRARY_BUCKET: ${LIBRARY_BUCKET:?Set the private library bucket}
+      LIBRARY_QUOTA_BYTES: ${LIBRARY_QUOTA_BYTES:-107374182400}
       AWS_REGION: ca-central-1
       AWS_SHARED_CREDENTIALS_FILE: /run/library-credentials/credentials
       AWS_EC2_METADATA_DISABLED: 'true'
@@ -89,6 +90,7 @@ services:
       LOCAL_ADMIN_URL: ${LOCAL_ADMIN_URL:?Set the administrator database URL for bootstrap}
       DATABASE_URL: ${DATABASE_URL}
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set the migration database URL}
+      OAUTH_PRINCIPALS_JSON: ${OAUTH_PRINCIPALS_JSON}
     command: [python, -m, central_brain.manage, bootstrap, --production-approved]
 networks:
   database: {internal: true}

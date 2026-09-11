@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     aws_region: str = "ca-central-1"
     library_local_path: str = "work/library"
     library_file_bytes: int = 50 * 1024 * 1024
-    library_quota_bytes: int = 1024 * 1024 * 1024
+    library_quota_bytes: int = 100 * 1024 * 1024 * 1024
 
     @model_validator(mode="after")
     def validate_deployment(self):

@@ -12,7 +12,7 @@ Your uploads become available immediately, with search available after processin
 
 ## Pilot limits
 
-- Originals are limited to 50 MiB each and 1 GiB per workspace, including retained versions and rejected file originals.
+- Originals are limited to 50 MiB each and 100 GiB per workspace, including retained versions and rejected file originals.
 - The pilot allows up to 2,000 library nodes for new library operations. Existing memories remain governed by the memory service.
 - Supported formats are PDF, DOCX, XLSX, CSV, Markdown, and UTF-8 plain text. Legacy DOC/XLS, images, OCR, and password-protected files are not supported for extraction.
 - Each file is limited to 1 million extracted characters, 500 sections, and 500 PDF pages. Each worksheet processes up to 100 columns and 10,000 rows, subject to the section and text limits. Expanded Office archives are capped at 100 MiB.

@@ -36,12 +36,14 @@ button, .button { display: inline-flex; align-items: center; justify-content: ce
 .quiet { background: transparent; border-color: transparent; }
 .small { padding: 8px 12px; min-height: 36px; font-size: 13px; }
 .danger { color: #a51f1f; border-color: #e9c9c9; }
-.delete-warning { border:1px solid #e9c9c9; border-left:3px solid #a51f1f; border-radius:8px; padding:18px; background:#fff8f7; margin:20px 0; }
-.delete-warning h2 { color:#8f3029; font-size:20px; margin:0 0 12px; }
+.delete-warning { border:1px solid #4DA28E; border-top:3px solid #1D6F5E; border-radius:5px; padding:20px; background:#FFFFFF; color:#222222; margin:20px 0; }
+.delete-warning h2 { color:#222222; font-size:20px; margin:0 0 12px; }
 .delete-warning p { line-height:1.6; }
+label[for="confirm-delete"] { font-weight:400; }
+label[for="confirm-delete"] strong { font-weight:700; }
 .delete-inventory { padding-left:20px; line-height:1.8; overflow-wrap:anywhere; }
-.destructive { background:#a51f1f; color:#fff; border-color:#a51f1f; }
-.destructive:hover { background:#841919; border-color:#841919; }
+.destructive { background:#222222; color:#FFFFFF; border-color:#222222; }
+.destructive:hover { background:#1D6F5E; border-color:#1D6F5E; }
 button:hover, .button:hover { text-decoration: none; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 ::selection { background: #dfe3e8; color:var(--ink); }

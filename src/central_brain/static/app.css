@@ -39,6 +39,9 @@ button, .button { display: inline-flex; align-items: center; justify-content: ce
 .delete-warning { border:1px solid #4DA28E; border-top:3px solid #1D6F5E; border-radius:5px; padding:20px; background:#FFFFFF; color:#222222; margin:20px 0; }
 .delete-warning h2 { color:#222222; font-size:20px; margin:0 0 12px; }
 .delete-warning p { line-height:1.6; }
+.bulk-approval { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:16px 0; }
+.bulk-approval .hint { flex:1 1 240px; }
+.bulk-approval button:disabled { opacity:.5; cursor:default; }
 label[for="confirm-delete"] { font-weight:400; }
 label[for="confirm-delete"] strong { font-weight:700; }
 .delete-inventory { padding-left:20px; line-height:1.8; overflow-wrap:anywhere; }

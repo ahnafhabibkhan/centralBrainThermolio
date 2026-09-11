@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from .library import Library
+from .archives import ArchiveFile, approval_item, approve_batch, review_suggestion
 
 
 def install_library_web(app, settings, repo, reviewer, page, check_csrf):
@@ -46,15 +47,24 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         section = location["path"].strip("/").split("/")[0] if location else ""
         with repo._connection(auth) as c:
             suggestions = c.execute(
-                "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' ORDER BY created_at LIMIT 50"
+                "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' AND created_by=%s ORDER BY created_at LIMIT 50",
+                (auth.principal.actor_id,),
             ).fetchall()
         suggestions = [dict(item) for item in suggestions]
         for suggestion in suggestions:
+            if suggestion['action'] == 'archive':
+                suggestion['destination'] = suggestion['payload']['folder_path']
+                continue
             parent_id = suggestion["payload"].get("parent_id")
             try:
                 suggestion["destination"] = library.path(auth, UUID(parent_id)) if parent_id else "Workspace"
             except HTTPException:
                 suggestion["destination"] = "Destination unavailable"
+        pending_files = [row for row in snapshot if row['status'] == 'proposed'][:100]
+        with repo._connection(auth) as c:
+            library._lock(c, auth)
+            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions]
+            approval_items += [approval_item(library, auth, c, 'node', n['id']) for n in pending_files]
         return page(
             request,
             "library.html",
@@ -70,8 +80,47 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             query=q,
             results=library.search(auth, q, folder)["results"] if q.strip() else [],
             suggestions=suggestions,
-            pending_files=[row for row in snapshot if row["status"] == "proposed"][:100],
+            pending_files=pending_files,
+            approval_items=approval_items,
         )
+
+    @app.post('/library/approve-all', include_in_schema=False)
+    def approve_all(request: Request, items: str = Form(...), csrf_token: str = Form(...)):
+        from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+        from typing import Literal
+
+        class Item(BaseModel):
+            model_config = ConfigDict(extra='forbid')
+            kind: Literal['node', 'suggestion']
+            id: UUID
+            fingerprint: str
+
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        if len(items) > 40000:
+            raise HTTPException(413, 'The approval selection is too large.')
+        try:
+            selected = TypeAdapter(list[Item]).validate_json(items)
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(422, 'Invalid approval selection.') from exc
+        approve_batch(library, auth, [item.model_dump(mode='json') for item in selected])
+        return RedirectResponse('/library', 303)
+
+    @app.get('/library/suggestions/{suggestion_id}', include_in_schema=False)
+    def suggestion_detail(request: Request, suggestion_id: UUID):
+        import hashlib
+        auth = reviewer(request)
+        with repo._connection(auth) as c:
+            suggestion = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed'", (suggestion_id, auth.principal.actor_id)).fetchone()
+        if not suggestion or suggestion['action'] != 'archive':
+            raise HTTPException(404, 'Archive proposal not found.')
+        files = []
+        for raw in suggestion['payload']['files']:
+            item = ArchiveFile.model_validate(raw)
+            data = item.data()
+            files.append({'name': item.name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+                          'preview': item.content[:12000] if item.encoding == 'utf8' else None})
+        return page(request, 'archive.html', title='Review chat archive', suggestion=suggestion, files=files)
 
     @app.post("/library/folders", include_in_schema=False)
     def folder_create(
@@ -156,7 +205,8 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         return StreamingResponse(
             chunks(),
             media_type="application/octet-stream",
-            headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe="")},
+            headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe=""),
+                     "X-Content-Type-Options": "nosniff"},
         )
 
     @app.get('/library/file/{node_id}/delete', include_in_schema=False)
@@ -204,27 +254,12 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         check_csrf(request, csrf_token)
         if action not in {"approve", "reject"}:
             raise HTTPException(422, "Unknown review action.")
-        with repo._connection(auth) as c:
-            row = c.execute(
-                "SELECT * FROM central_brain.library_suggestions WHERE id=%s AND status='proposed' FOR UPDATE",
-                (suggestion_id,),
-            ).fetchone()
-            if not row:
-                raise HTTPException(404, "Suggestion not found.")
-            p = row["payload"]
-            parent = UUID(p["parent_id"]) if p.get("parent_id") else None
-            if action == "approve":
-                if row["action"] == "folder":
-                    existing = c.execute("SELECT id FROM central_brain.library_nodes WHERE kind='folder' "
-                                         "AND status='active' AND parent_id IS NOT DISTINCT FROM %s "
-                                         "AND lower(name)=lower(%s)", (parent, p["name"])).fetchone()
-                    if not existing:
-                        library.folder(auth, p["name"], parent, connection=c)
-                else:
-                    library.move(auth, UUID(p["node_id"]), p["name"], parent, connection=c)
-            c.execute(
-                "UPDATE central_brain.library_suggestions SET status=%s WHERE id=%s",
-                (action, suggestion_id),
-            )
-            library._audit(c, auth, "organization." + action, suggestion_id)
+        if action == 'approve':
+            with repo._connection(auth) as c:
+                item = approval_item(library, auth, c, 'suggestion', suggestion_id)
+            approve_batch(library, auth, [item])
+        else:
+            with repo._connection(auth) as c:
+                library._lock(c, auth)
+                review_suggestion(library, auth, suggestion_id, False, c, [])
         return RedirectResponse("/library", 303)

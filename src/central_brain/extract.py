@@ -32,6 +32,9 @@ def extract(path, extension):
                 or len(archive.infolist()) > 10000
             ):
                 raise ValueError("Expanded document exceeds processing limits.")
+    if extension in {".png", ".jpg", ".jpeg", ".webp"}:
+        return {"sections": [{"location": "Original image", "content": "Original image asset. Download the file to view it. Image text recognition is not enabled."}],
+                "state": "ready", "error": None}
     if extension == ".pdf":
         from pypdf import PdfReader
 
@@ -83,7 +86,7 @@ def extract(path, extension):
             text = stream.read(1000001)
         if len(text) > 1000000:
             truncated = True
-        add("Text", text)
+        add("SVG source" if extension == ".svg" else "Text", text)
     return {
         "sections": sections,
         "state": "partial" if truncated else ("ready" if sections else "unsearchable"),

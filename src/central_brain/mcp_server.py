@@ -8,6 +8,7 @@ from mcp.types import ToolAnnotations
 
 from .auth import AuthContext
 from .models import MemoryCreate, SearchRequest
+from .archives import ArchiveFile, find_folders, propose_archive
 
 current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
@@ -38,12 +39,18 @@ def build_mcp(settings, repo):
             "Its revision changes with accessible files, memories, approvals and indexing state. "
             "Check recent_deletions and stop citing or reusing those item IDs. The deletion list is bounded; "
             "when a revision changes, search again before relying on cached files. Previously returned chat text cannot be recalled. "
-            "When the user asks to store a chat, agree a project and chat topic, inspect existing folders, "
-            "and propose a folder under Projects/<project>/Chats/<date-topic>. Reuse an existing destination. "
-            "Propose summary.md and separate named text documents with their chat source references. "
-            "New folders require approval before files can be proposed into them. A summary is not an original attachment. "
-            "Only .md and .txt content can be proposed by the current file tool; direct the user to the website "
-            "to upload original PDFs, Word files, spreadsheets, or other supported binary files. "
+            "When the user asks to store a conversation and its attachments, use propose_chat_archive, not just propose_memory. "
+            "First call find_folders for the project and category, show related existing folder paths, "
+            "and ask whether to use one or a separate folder. Only set destination_confirmed after the user agrees. "
+            "For a new category, propose a descriptive path such as Brand/Thermolio/Logo or Projects/<project>/Chats/<date-topic>. "
+            "The archive creates missing folders, summary.md, source.md, and supplied originals together upon approval. "
+            "Transfer actual SVG source as utf8 without rewriting it. Transfer other supported originals as exact base64 bytes "
+            "only when the host exposes their contents. Preserve filenames and extensions. Never encode a summary as an original. "
+            "Inventory attachments first and clearly identify any that could not be transferred. "
+            "The archive limit is 240 KB per proposal including encoded content. Use a distinct summary_filename when "
+            "adding another conversation to an existing folder that already contains summary.md. For larger or inaccessible originals, "
+            "ask the user to upload them through Central Brain into the selected folder. Chat-local attachment links "
+            "do not automatically transfer bytes, and saving a memory does not create folders or copy attachments. "
             "Never claim to have copied chat attachments that were not transferred. "
             "Use search_library for questions about project documents, skills and memories. Search first, "
             "then read only relevant file sections. List folders when the destination is unclear. "
@@ -138,6 +145,25 @@ def build_mcp(settings, repo):
     def list_folder(folder_id: str | None = None, offset: int = 0) -> list[dict]:
         """List up to 100 accessible files and folders. Omit folder_id for the library root."""
         return library.listing(current_auth.get(), UUID(folder_id) if folder_id else None, offset=max(0,offset))
+
+    @mcp.tool(name="find_folders", annotations=readonly)
+    def matching_folders(category: str) -> dict:
+        """Find accessible existing category or project folders. Show matches and ask which destination to use."""
+        return find_folders(library, current_auth.get(), category[:500])
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+    def propose_chat_archive(folder_path: str, summary: str, source_reference: str,
+                             files: list[ArchiveFile], destination_confirmed: bool = False,
+                             summary_filename: str = 'summary.md') -> dict:
+        """Propose a folder tree, summary.md, source.md, and exact original attachments as one reviewable archive.
+
+        Call find_folders first. If related folders exist, ask the user where to file the archive before
+        setting destination_confirmed. SVG source uses utf8; binary originals use base64. Total payload
+        limit is 240 KB with up to 20 originals. Choose a distinct summary_filename for another conversation
+        in the same folder. Never fabricate inaccessible attachments or copy links
+        in place of original bytes. Report omitted originals. Human approval creates all archive files.
+        """
+        return propose_archive(library, current_auth.get(), folder_path, summary, source_reference, files, destination_confirmed, summary_filename)
 
     @mcp.tool(annotations=readonly)
     def get_file_info(file_id: str) -> dict:

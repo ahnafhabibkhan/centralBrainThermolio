@@ -4,14 +4,14 @@ import hashlib
 import io
 import json
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
-EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt"}
+EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt", ".svg", ".png", ".jpg", ".jpeg", ".webp"}
 
 
 def filename(value):
@@ -481,19 +481,20 @@ class Library:
             self._audit(c, auth, "library.move", node_id)
 
     def upload(
-        self, auth, name, data, parent=None, node_id=None, proposed=False, visibility="workspace"
+        self, auth, name, data, parent=None, node_id=None, proposed=False, visibility="workspace",
+        connection=None, stored_keys=None,
     ):
         auth.require("writer" if proposed else "reviewer")
         name = filename(name)
         if Path(name).suffix.lower() not in EXTENSIONS:
-            raise HTTPException(422, "Supported formats: PDF, DOCX, XLSX, CSV, MD, TXT.")
+            raise HTTPException(422, "Supported formats: PDF, DOCX, XLSX, CSV, MD, TXT, SVG, PNG, JPG, WEBP.")
         if visibility not in {"private", "workspace"}:
             raise HTTPException(422, "Invalid visibility.")
         if not data or len(data) > self.settings.library_file_bytes:
             raise HTTPException(413, "File must be between 1 byte and 50 MB.")
         version_id = uuid4()
         key = f"files/{auth.principal.workspace_id}/{version_id}"
-        with self._upload_transaction(auth, key) as c:
+        with nullcontext(connection) if connection else self._upload_transaction(auth, key) as c:
             self._lock(c, auth)
             self._parent(c, auth, parent)
             used = c.execute(
@@ -543,6 +544,8 @@ class Library:
                 ),
             )
             # Store while the quota reservation transaction is locked. Failed storage rolls it back.
+            if stored_keys is not None:
+                stored_keys.append(key)
             self.store.put(key, data)
             self._audit(c, auth, "file.propose" if proposed else "file.upload", node_id)
         return node_id
@@ -669,9 +672,10 @@ class Library:
             self._audit(c, auth, "organization.propose", sid)
         return {"id": sid, "status": "proposed"}
 
-    def review(self, auth, node_id, approve):
+    def review(self, auth, node_id, approve, connection=None):
         auth.require("reviewer")
-        with self.repo._connection(auth) as c:
+        with nullcontext(connection) if connection else self.repo._connection(auth) as c:
+            self._lock(c, auth)
             row = self._get(c, auth, node_id, True)
             if row["status"] != "proposed":
                 raise HTTPException(409, "Only pending files can be reviewed.")

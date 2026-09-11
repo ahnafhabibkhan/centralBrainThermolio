@@ -152,7 +152,7 @@
     if (url.pathname === '/library' || (url.pathname === '/' && !url.search)) {
       event.preventDefault();
       openFolder(url.searchParams.get('folder') || '', url.href).catch(error => message(error.message, true));
-    } else if (/^\/(library\/file\/|review\/|new$|getting-started$|search$)/.test(url.pathname)
+    } else if (/^\/(library\/(?:file|suggestions)\/|review\/|new$|getting-started$|search$)/.test(url.pathname)
                || (url.pathname === '/' && url.searchParams.has('view'))) {
       event.preventDefault();
       openDetails(url.href).catch(error => message(error.message, true));

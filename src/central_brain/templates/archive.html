@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<p class="eyebrow">CHAT ARCHIVE · AWAITING APPROVAL</p>
+<h1>{{ suggestion.payload.name }}</h1>
+<section class="card"><h2>Folder arrangement</h2><p>{{ suggestion.payload.folder_path }}</p>
+<p>Approval creates the missing folders and all listed files together. Existing folders on this path are reused. Existing files are never overwritten.</p>
+{% if suggestion.payload.existing_folders %}<p>Related folders were found when this proposal was prepared. Review the selected destination above.</p><ul>{% for folder in suggestion.payload.existing_folders %}<li>{{ folder.path }}</li>{% endfor %}</ul>{% endif %}
+<p>This archive includes {{ suggestion.payload.summary_filename|default('summary.md') }}, {{ suggestion.payload.source_filename|default('source.md') }}, and {{ files|length }} original files.</p></section>
+<section class="card"><h2>Conversation summary</h2><pre class="document-text">{{ suggestion.payload.summary }}</pre><p class="source">{{ suggestion.payload.source_reference }}</p></section>
+{% for file in files %}<details class="card"><summary>{{ file.name }} · {{ file.size }} bytes</summary><p class="source">SHA-256: {{ file.sha256 }}</p>{% if file.preview %}<pre class="document-text">{{ file.preview }}</pre>{% else %}<p>The original binary bytes are included. This file has no text preview.</p>{% endif %}</details>{% endfor %}
+{% if not files %}<p>No original attachments were transferred. Only the conversation summary and source will be saved.</p>{% endif %}
+<form method="post" action="/library/suggestions/{{ suggestion.id }}" class="card"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button name="action" value="approve" class="primary">Approve archive</button><button name="action" value="reject">Reject</button></form>
+{% endblock %}

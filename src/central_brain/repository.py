@@ -1,7 +1,7 @@
 import hashlib
 import json
 import math
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -154,9 +154,9 @@ class PostgresMemoryRepository:
         with self._connection(auth) as connection:
             return Memory.model_validate(self._not_found(self._get(connection, auth, memory_id)))
 
-    def transition(self, auth, memory_id, action):
+    def transition(self, auth, memory_id, action, connection=None):
         auth.require("admin" if action == "delete" else "reviewer")
-        with self._connection(auth) as connection:
+        with nullcontext(connection) if connection else self._connection(auth) as connection:
             row = self._not_found(self._get(connection, auth, memory_id, lock=True))
             if action == "delete":
                 connection.execute('''INSERT INTO central_brain.library_deletions

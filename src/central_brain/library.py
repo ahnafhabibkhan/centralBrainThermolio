@@ -670,47 +670,8 @@ class Library:
         }
 
     def search(self, auth, query, parent=None, limit=8):
-        auth.require("reader")
-        if not query.strip() or len(query) > 2000:
-            raise HTTPException(422, "Enter a search query of up to 2,000 characters.")
-        self.project_memories(auth)
-        with self.repo._connection(auth) as c:
-            self._parent(c, auth, parent)
-            rows = c.execute(
-                """WITH RECURSIVE paths AS (
-              SELECT id,name::text AS path FROM central_brain.library_nodes WHERE parent_id IS NULL
-              UNION ALL SELECT n.id,p.path||' / '||n.name FROM central_brain.library_nodes n JOIN paths p ON n.parent_id=p.id
-            ), descendants AS (
-              SELECT id FROM central_brain.library_nodes WHERE id=%(parent)s
-              UNION ALL SELECT n.id FROM central_brain.library_nodes n JOIN descendants d ON n.parent_id=d.id
-            ), q AS (SELECT websearch_to_tsquery('english',%(query)s) AS term), docs AS (
-              SELECT n.id,n.name,n.parent_id,v.version,s.ordinal,s.location,s.content,
-                setweight(to_tsvector('english',coalesce(p.path,n.name)),'A') || s.search_document AS document
-              FROM central_brain.library_nodes n
-              JOIN LATERAL(SELECT * FROM central_brain.library_versions WHERE node_id=n.id ORDER BY version DESC LIMIT 1)v ON true
-              JOIN central_brain.library_sections s ON s.version_id=v.id
-              LEFT JOIN paths p ON p.id=n.id
-              WHERE n.status='active' AND n.sensitivity=ANY(%(levels)s)
-              AND (%(parent)s::uuid IS NULL OR n.parent_id IN(SELECT id FROM descendants))
-              UNION ALL
-              SELECT n.id,n.name,n.parent_id,1,0,'Memory',m.content,m.search_document || setweight(to_tsvector('english',coalesce(p.path,n.name)),'A')
-              FROM central_brain.library_nodes n JOIN central_brain.memories m ON m.id=n.memory_id
-              LEFT JOIN paths p ON p.id=n.id
-              WHERE m.status='active' AND m.deleted_at IS NULL AND (m.expires_at IS NULL OR m.expires_at>now())
-              AND m.sensitivity=ANY(%(levels)s) AND (%(parent)s::uuid IS NULL OR n.parent_id IN(SELECT id FROM descendants))
-            ) SELECT id,name,version,ordinal,location,left(content,1400) AS excerpt,
-               ts_rank_cd(document,q.term) AS score FROM docs,q WHERE document @@ q.term
-               ORDER BY score DESC,id,ordinal LIMIT %(limit)s""",
-                {
-                    "query": query,
-                    "parent": parent,
-                    "levels": auth.principal.sensitivities,
-                    "limit": min(max(limit, 1), 8),
-                },
-            ).fetchall()
-        for row in rows:
-            row["path"] = self.path(auth, row["id"])
-        return {"results": rows, "reference_material": True}
+        from .retrieval import search
+        return search(self, auth, query, parent, limit)
 
     def suggest(self, auth, action, payload):
         auth.require("writer")

@@ -36,7 +36,11 @@ def build_mcp(settings, repo):
             "Ask for agreement before proposing new information unless the user already asked to save it. "
             "Check for existing relevant memories before suggesting a duplicate. Never suggest saving secrets. "
             "These are chat response instructions, not a popup or a guarantee that the host app runs a tool after every message. "
-            "Call get_workspace_context at the start of a relevant task and again when checking for updates. "
+            "Call get_context_for_task with concise search terms from the current question at the start of a relevant task and before relying on saved context. "
+            "Live search uses keywords. If no results are found, try shorter terms or synonyms before concluding information is absent. "
+            "Pass its context_revision as known_revision on later calls. When changed is true, replace cached search results. "
+            "If refresh_required is true, retry before answering. Identical file sections are grouped; also_in lists accessible copy paths. "
+            "Use get_workspace_context when only an overview is needed. "
             "Its revision changes with accessible files, memories, approvals and indexing state. "
             "Check recent_deletions and stop citing or reusing those item IDs. The deletion list is bounded. "
             "When a revision changes, search again before relying on cached files. Previously returned chat text cannot be recalled. "
@@ -149,6 +153,18 @@ def build_mcp(settings, repo):
         return library.context(current_auth.get())
 
     @mcp.tool(annotations=readonly)
+    def get_context_for_task(query: str, folder_id: str | None = None,
+                             known_revision: str | None = None, limit: int = 6) -> dict:
+        """Refresh task context and find current cited sections using concise keyword search terms.
+
+        Pass the previous context_revision as known_revision. Replace old results when changed is true.
+        Exact copies are grouped with accessible alternative locations. Retry if refresh_required is true.
+        """
+        from .retrieval import task_context
+        return task_context(library, current_auth.get(), query, UUID(folder_id) if folder_id else None,
+                            known_revision, limit)
+
+    @mcp.tool(annotations=readonly)
     def list_folder(folder_id: str | None = None, offset: int = 0) -> list[dict]:
         """List up to 100 accessible files and folders. Omit folder_id for the library root."""
         return library.listing(current_auth.get(), UUID(folder_id) if folder_id else None, offset=max(0,offset))
@@ -193,10 +209,9 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=readonly)
     def search_library(query: str, folder_id: str | None = None, limit: int = 8) -> dict:
-        """Search approved memories and uploaded document sections, optionally within a folder tree."""
-        result = library.search(current_auth.get(),query,UUID(folder_id) if folder_id else None,limit)
-        result["context_revision"] = library.context(current_auth.get())["revision"]
-        return result
+        """Search current approved sections and filenames. Exact copies include alternative accessible paths."""
+        from .retrieval import task_context
+        return task_context(library, current_auth.get(), query, UUID(folder_id) if folder_id else None, limit=limit)
 
     @mcp.tool(annotations=readonly)
     def read_file_sections(file_id: str, version: int | None = None, start: int = 0, limit: int = 3) -> dict:

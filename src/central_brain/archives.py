@@ -150,6 +150,9 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
                 library.folder(auth, p["name"], parent, connection=c)
         elif row["action"] == "move":
             library.move(auth, UUID(p["node_id"]), p["name"], parent, connection=c)
+        elif row['action'] == 'copy':
+            library.copy(auth, UUID(p['node_id']), p['name'], parent, p['source_version'],
+                         p['source_sha256'], connection=c, stored_keys=stored_keys)
         else:
             raise HTTPException(422, "Unknown organization action.")
     action = "approve" if approve else "reject"

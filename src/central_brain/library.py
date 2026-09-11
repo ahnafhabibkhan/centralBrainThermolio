@@ -278,7 +278,8 @@ class Library:
             "folders": [{"id": str(n["id"]), "path": n["path"][:300]} for n in active
                         if n["kind"] == "folder"][:40],
             "recent_files": [{"id": str(n["id"]), "path": n["path"][:300],
-                              "version": n["version"], "state": n["state"], "category": n["category"]}
+                              "version": n["version"], "state": n["state"], "category": n["category"],
+                              "copied_from": n["copied_from"]}
                              for n in sorted(active, key=lambda n: n["changed_at"], reverse=True)
                              if n["kind"] != "folder"][:8],
             "recent_deletions": [{**d, 'id': str(d['id']), 'deleted_at': d['deleted_at'].isoformat(),
@@ -480,6 +481,63 @@ class Library:
             )
             self._audit(c, auth, "library.move", node_id)
 
+    def copy(self, auth, node_id, name, parent=None, version=None, expected_sha256=None,
+             connection=None, stored_keys=None):
+        """Create an independent original and preserve the source's access restrictions."""
+        auth.require('reviewer')
+        name = filename(name)
+        keys = stored_keys if stored_keys is not None else []
+        try:
+            with nullcontext(connection) if connection else self.repo._connection(auth) as c:
+                self._lock(c, auth)
+                source = self._get(c, auth, node_id)
+                if source['kind'] != 'file':
+                    raise HTTPException(422, 'Copy an approved uploaded file. Canonical memories remain single records.')
+                if Path(name).suffix.lower() != Path(source['name']).suffix.lower():
+                    raise HTTPException(422, 'Preserve the original file extension when copying.')
+                self._parent(c, auth, parent)
+                self._unique(c, parent, name)
+                original = c.execute('SELECT * FROM central_brain.library_versions WHERE node_id=%s '
+                                     'AND (%s::int IS NULL OR version=%s) ORDER BY version DESC LIMIT 1',
+                                     (node_id, version, version)).fetchone()
+                if not original or (expected_sha256 and original['sha256'] != expected_sha256):
+                    raise HTTPException(409, 'The source version is unavailable or changed. Review the file again.')
+                visibility, sensitivity = source['visibility'], source['sensitivity']
+                if parent:
+                    destination = self._get(c, auth, parent)
+                    if destination['visibility'] == 'private':
+                        visibility = 'private'
+                    levels = ['public', 'internal', 'confidential', 'restricted']
+                    sensitivity = max([sensitivity, destination['sensitivity']], key=levels.index)
+                with self.store.get(original['object_key']) as stream:
+                    data = stream.read(self.settings.library_file_bytes + 1)
+                if len(data) != original['size'] or hashlib.sha256(data).hexdigest() != original['sha256']:
+                    raise HTTPException(409, 'The stored original failed its integrity check. No copy was created.')
+                new_id = self.upload(auth, name, data, parent, visibility=visibility, connection=c, stored_keys=keys)
+                provenance = {'file_id': str(node_id), 'version': original['version'], 'sha256': original['sha256']}
+                c.execute('UPDATE central_brain.library_nodes SET sensitivity=%s,copied_from=%s WHERE id=%s',
+                          (sensitivity, Jsonb(provenance), new_id))
+                text_usage = c.execute('SELECT coalesce(sum(length(content)),0) AS n FROM central_brain.library_sections').fetchone()['n']
+                source_text = c.execute('SELECT coalesce(sum(length(content)),0) AS n FROM central_brain.library_sections '
+                                        'WHERE version_id=%s', (original['id'],)).fetchone()['n']
+                if original['state'] in {'ready', 'partial', 'unsearchable'} and text_usage + source_text <= 20000000:
+                    new_version = c.execute('SELECT id FROM central_brain.library_versions WHERE node_id=%s', (new_id,)).fetchone()['id']
+                    c.execute('INSERT INTO central_brain.library_sections(workspace_id,version_id,ordinal,location,content) '
+                              'SELECT workspace_id,%s,ordinal,location,content FROM central_brain.library_sections '
+                              'WHERE version_id=%s', (new_version, original['id']))
+                    c.execute('UPDATE central_brain.library_versions SET state=%s,error=%s WHERE id=%s',
+                              (original['state'], original['error'], new_version))
+                self._audit(c, auth, 'file.copy', new_id)
+            return new_id
+        except Exception:
+            if connection is None:
+                for key in keys:
+                    try:
+                        self.store.delete(key)
+                    except Exception:
+                        pass
+            raise
+
     def upload(
         self, auth, name, data, parent=None, node_id=None, proposed=False, visibility="workspace",
         connection=None, stored_keys=None,
@@ -656,14 +714,28 @@ class Library:
 
     def suggest(self, auth, action, payload):
         auth.require("writer")
-        if action not in {"folder", "move"}:
+        if action not in {"folder", "move", "copy"}:
             raise HTTPException(422, "Unsupported suggestion.")
         filename(payload.get("name", ""))
         parent = UUID(payload["parent_id"]) if payload.get("parent_id") else None
         with self.repo._connection(auth) as c:
+            self._lock(c, auth)
             self._parent(c, auth, parent)
-            if action == "move":
-                self._get(c, auth, UUID(payload["node_id"]))
+            if action in {'move', 'copy'}:
+                if not payload.get('node_id'):
+                    raise HTTPException(422, 'Choose a source item.')
+                source = self._get(c, auth, UUID(payload["node_id"]))
+                if action == 'copy':
+                    if source['kind'] != 'file':
+                        raise HTTPException(422, 'Only approved uploaded files can be copied.')
+                    if Path(payload['name']).suffix.lower() != Path(source['name']).suffix.lower():
+                        raise HTTPException(422, 'Preserve the original file extension when copying.')
+                    self._unique(c, parent, payload['name'])
+                    original = c.execute('SELECT version,sha256 FROM central_brain.library_versions WHERE node_id=%s '
+                                         'ORDER BY version DESC LIMIT 1', (source['id'],)).fetchone()
+                    if not original:
+                        raise HTTPException(409, 'The original file is unavailable.')
+                    payload = dict(payload, source_version=original['version'], source_sha256=original['sha256'])
             sid = uuid4()
             c.execute(
                 "INSERT INTO central_brain.library_suggestions(id,workspace_id,created_by,action,payload) VALUES(%s,%s,%s,%s,%s)",

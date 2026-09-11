@@ -81,7 +81,7 @@ def bootstrap(admin_url, runtime_url, migrator_url, database="central_brain", re
     with psycopg.connect(db_url, autocommit=True) as connection:
         connection.execute("SET ROLE central_brain_owner")
         # The core migration is idempotent. Optional embeddings are deliberately not applied.
-        for name in ("001_core.sql", "003_pilot.sql", "004_library.sql", "005_library_deletions.sql"):
+        for name in ("001_core.sql", "003_pilot.sql", "004_library.sql", "005_library_deletions.sql", "006_library_copies.sql"):
             connection.execute((ROOT / "database/migrations" / name).read_text())
         connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA central_brain FROM central_brain_runtime")

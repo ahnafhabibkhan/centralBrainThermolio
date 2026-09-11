@@ -196,6 +196,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             title=node["name"],
             node=node,
             folders=folders,
+            copy_version=next((v for v in node['versions'] if version is None or v['version'] == version), None),
             preview=library.read(auth, node_id, version, start, 3, True)
             if node["kind"] != "folder"
             else None,
@@ -255,6 +256,14 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             raise HTTPException(422, "Unknown review action.")
         library.review(auth, node_id, action == "approve")
         return RedirectResponse("/library", 303)
+
+    @app.post('/library/file/{node_id}/copy', include_in_schema=False)
+    def copy_file(request: Request, node_id: UUID, name: str = Form(...), parent_id: UUID | None = Form(None),
+                  version: int = Form(..., ge=1), source_sha256: str = Form(...), csrf_token: str = Form(...)):
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        new_id = library.copy(auth, node_id, name, parent_id, version, source_sha256)
+        return RedirectResponse(f'/library/file/{new_id}', 303)
 
     @app.post("/library/suggestions/{suggestion_id}", include_in_schema=False)
     def organization(

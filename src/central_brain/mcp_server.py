@@ -38,8 +38,11 @@ def build_mcp(settings, repo):
             "These are chat response instructions, not a popup or a guarantee that the host app runs a tool after every message. "
             "Call get_workspace_context at the start of a relevant task and again when checking for updates. "
             "Its revision changes with accessible files, memories, approvals and indexing state. "
-            "Check recent_deletions and stop citing or reusing those item IDs. The deletion list is bounded; "
-            "when a revision changes, search again before relying on cached files. Previously returned chat text cannot be recalled. "
+            "Check recent_deletions and stop citing or reusing those item IDs. The deletion list is bounded. "
+            "When a revision changes, search again before relying on cached files. Previously returned chat text cannot be recalled. "
+            "A file's copied_from identifies its original source version and checksum. Copies have separate IDs and "
+            "independent versions; editing or deleting the source does not modify existing copies. "
+            "Use suggest_organization with action copy to propose copying an existing approved uploaded file. "
             "When the user asks to store a conversation and its attachments, use propose_chat_archive, not just propose_memory. "
             "First call find_folders for the project and category, show related existing folder paths, "
             "and ask whether to use one or a separate folder. Only set destination_confirmed after the user agrees. "
@@ -229,7 +232,11 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
     def suggest_organization(action: str, name: str, folder_id: str | None = None, file_id: str | None = None) -> dict:
-        """Suggest action 'folder' to create a folder, or 'move' to rename or move an existing item. A human must approve."""
+        """Suggest 'folder', 'move', or 'copy'. For copy, provide file_id, destination folder_id and name.
+
+        A copy preserves the selected source version, original bytes and access restrictions as an
+        independent file. The proposal records the source version for review. A human must approve.
+        """
         return library.suggest(current_auth.get(),action,{'name':name,'parent_id':folder_id,'node_id':file_id})
 
     return mcp

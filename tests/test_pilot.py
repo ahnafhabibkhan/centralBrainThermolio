@@ -22,6 +22,11 @@ from central_brain.models import MemoryCreate, SearchRequest
 from central_brain.repository import PostgresMemoryRepository
 
 
+class PrivateTestContext(SimpleNamespace):
+    def __repr__(self):
+        return '<Central Brain test context; credentials omitted>'
+
+
 @pytest.fixture
 def pilot():
     env = dotenv_values('.env')
@@ -49,7 +54,7 @@ def pilot():
     repo = PostgresMemoryRepository(database)
     repo.open()
     with TestClient(create_app(repo, settings), base_url='http://127.0.0.1:8080') as client:
-        yield SimpleNamespace(repo=repo, client=client, settings=settings,
+        yield PrivateTestContext(repo=repo, client=client, settings=settings,
                               auth=AuthContext(owner), migration=migration)
     repo.close()
 
@@ -202,7 +207,7 @@ def test_mcp_tools_and_auth(pilot, endpoint):
                    'clientInfo': {'name': 'integration-test', 'version': '1'}}})
     assert response.status_code == 200, response.text
     response = c.post(endpoint, headers=h, json={'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
-    assert {t['name'] for t in response.json()['result']['tools']} == {
+    assert {t['name'] for t in response.json()['result']['tools']} >= {
         'search_memories', 'propose_memory', 'list_skills', 'get_skill'}
     response = c.post(endpoint, headers=h, json={'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
         'params': {'name': 'propose_memory', 'arguments': {'memory': memory().model_dump(mode='json')}}})

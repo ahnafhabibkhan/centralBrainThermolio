@@ -154,3 +154,13 @@ footer { min-height: 76px; display: flex; align-items: center; justify-content: 
   .onboarding { align-items: flex-start; flex-wrap: wrap; padding: 20px; }
   .onboarding a { margin: 0; }
 }
+/* The library keeps original files and review controls in the same workspace. */
+.library-toolbar{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin:1.5rem 0;color:#62666d}
+.library-actions{display:grid;grid-template-columns:1fr 1.5fr;gap:1.5rem}
+.library-actions .card,.library-search{padding:1.5rem;border:1px solid #dddfe1;border-radius:18px;background:#fff;margin:1rem 0}
+.library-actions input,.library-actions select,.library-search input{width:100%;margin:.5rem 0 1rem}
+.file-table{overflow-x:auto;background:#fff;border:1px solid #dddfe1;border-radius:16px;margin:1.5rem 0}
+.file-table table{width:100%;border-collapse:collapse}.file-table td,.file-table th{padding:1rem;text-align:left;border-bottom:1px solid #eee}
+.document-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.7;background:#f7f8f7;padding:1rem;border-radius:10px}
+.drop-active{outline:3px solid #22ad65}.accent{color:#22ad65}
+@media(max-width:720px){.library-actions{grid-template-columns:1fr}.file-table td,.file-table th{padding:.7rem}}

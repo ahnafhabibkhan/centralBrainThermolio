@@ -28,10 +28,12 @@ services:
     logging:
       driver: local
       options: {max-size: 10m, max-file: '3'}
-  app:
+  app: &runtimeapp
     <<: *app
     restart: unless-stopped
     mem_limit: 550m
+    tmpfs: ['/tmp:size=192m,mode=1777']
+    volumes: ['/opt/central-brain/library-credentials:/run/library-credentials:ro']
     depends_on:
       postgres: {condition: service_healthy}
     networks: [database, edge]
@@ -48,11 +50,22 @@ services:
       OAUTH_PRINCIPALS_JSON: ${OAUTH_PRINCIPALS_JSON:?Map approved Cognito subjects to principals}
       OAUTH_WEB_CLIENT_ID: ${OAUTH_WEB_CLIENT_ID:?Set the review client ID}
       OAUTH_WEB_CLIENT_SECRET: ${OAUTH_WEB_CLIENT_SECRET:?Set the review client secret}
+      LIBRARY_BUCKET: ${LIBRARY_BUCKET:?Set the private library bucket}
+      AWS_REGION: ca-central-1
+      AWS_SHARED_CREDENTIALS_FILE: /run/library-credentials/credentials
+      AWS_EC2_METADATA_DISABLED: 'true'
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
+  library-worker:
+    <<: *runtimeapp
+    command: [python, -m, central_brain.library_worker]
+    mem_limit: 600m
+    tmpfs: ['/tmp:size=80m,mode=1777']
+    healthcheck:
+      disable: true
   caddy:
     image: caddy:2@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017
     restart: unless-stopped

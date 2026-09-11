@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     max_context_chars: int = Field(default=16000, ge=1000, le=100000)
     requests_per_minute: int = Field(default=60, ge=1, le=600)
     log_level: str = "info"
+    library_bucket: str = ""
+    aws_region: str = "ca-central-1"
+    library_local_path: str = "work/library"
+    library_file_bytes: int = 50 * 1024 * 1024
+    library_quota_bytes: int = 1024 * 1024 * 1024
 
     @model_validator(mode="after")
     def validate_deployment(self):

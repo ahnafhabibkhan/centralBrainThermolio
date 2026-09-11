@@ -30,7 +30,7 @@ class PostgresMemoryRepository:
     def ready(self):
         with self.pool.connection() as connection:
             return bool(connection.execute(
-                "SELECT version FROM central_brain.schema_migrations WHERE version='003_pilot'"
+                "SELECT version FROM central_brain.schema_migrations WHERE version='004_library'"
             ).fetchone())
 
     @contextmanager

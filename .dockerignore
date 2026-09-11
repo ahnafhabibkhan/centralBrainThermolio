@@ -7,3 +7,4 @@ work
 .pytest_cache
 .ruff_cache
 *.dump
+**/* 2.py

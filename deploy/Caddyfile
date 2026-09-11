@@ -1,6 +1,11 @@
 {$PUBLIC_URL} {
     header Strict-Transport-Security "max-age=31536000"
-    request_body {
+    @upload path /library/upload
+    request_body @upload {
+        max_size 51MB
+    }
+    @small not path /library/upload
+    request_body @small {
         max_size 256KB
     }
     reverse_proxy app:8080

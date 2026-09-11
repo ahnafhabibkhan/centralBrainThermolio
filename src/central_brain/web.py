@@ -79,6 +79,9 @@ def install_web(app, settings, repo):
         request.session["sid"] = session_id
         csrf(request)
 
+    from .library_web import install_library_web
+    install_library_web(app, settings, repo, reviewer, page, check_csrf)
+
     @app.get("/login", include_in_schema=False)
     def login_page(request: Request, signed_out: bool = False):
         if request.session.get("sid"):

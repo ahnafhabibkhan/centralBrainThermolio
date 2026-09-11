@@ -37,6 +37,27 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        if scope['path'] == '/library/upload':
+            # Bound the multipart body on disk before parsing, including requests without Content-Length.
+            import tempfile
+            with tempfile.TemporaryFile() as spool:
+                size = 0
+                while True:
+                    message = await receive()
+                    if message['type'] == 'http.disconnect':
+                        return
+                    body = message.get('body', b'')
+                    size += len(body)
+                    if size > 51 * 1024 * 1024:
+                        return await JSONResponse({'detail':'Upload exceeds 50 MB plus form overhead.'},413)(scope,receive,send)
+                    spool.write(body)
+                    if not message.get('more_body',False):
+                        break
+                spool.seek(0)
+                async def upload_receive():
+                    body=spool.read(65536)
+                    return {'type':'http.request','body':body,'more_body':spool.tell()<size}
+                return await self.app(scope,upload_receive,send)
         chunks = []
         size = 0
         while True:
@@ -150,6 +171,13 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(HTTPException)
     async def errors(request, exc):
         headers = dict(exc.headers or {})
+        if request.url.path.startswith('/library') and exc.status_code >= 400:
+            from html import escape
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<title>File action needs attention</title><link rel="stylesheet" href="/static/app.css">'
+                '<main><h1>File action needs attention.</h1><p>'+escape(str(exc.detail))+
+                '</p><a href="/library">Return to your files</a></main></html>',exc.status_code,headers=headers)
         if exc.status_code == 401:
             headers["WWW-Authenticate"] = 'Bearer resource_metadata="' + settings.public_url \
                 + '/.well-known/oauth-protected-resource"'

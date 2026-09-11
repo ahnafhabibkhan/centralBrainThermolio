@@ -13,6 +13,9 @@ current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
 
 def build_mcp(settings, repo):
+    from uuid import UUID
+    from .library import Library
+    library = Library(repo, settings)
     origin = urlsplit(settings.public_url)
     mcp = FastMCP(
         "Central Brain",
@@ -23,7 +26,11 @@ def build_mcp(settings, repo):
             "Skip guesses, casual conversation, credentials and unnecessary sensitive data. "
             "Include a precise source reference and ask when intent is unclear. Never claim a proposal "
             "was approved. The human reviews proposals on the Central Brain webpage. "
-            "No background conversation capture or automatic synchronization is provided."
+            "No background conversation capture or automatic synchronization is provided. "
+            "Use search_library for questions about project documents and memories. Search first, "
+            "then read only relevant file sections. List folders when the destination is unclear. "
+            "Cite returned file paths, versions and locations. Extraction can be partial; never "
+            "claim the whole file was read. Organization suggestions and proposed files require human approval."
         ),
         stateless_http=True, json_response=True, streamable_http_path="/",
         max_request_body_size=262144,
@@ -79,5 +86,57 @@ def build_mcp(settings, repo):
         if not skills:
             return {"error": "skill not found"}
         return skills[0].model_dump()
+
+    @mcp.tool(annotations=readonly)
+    def list_folder(folder_id: str | None = None, offset: int = 0) -> list[dict]:
+        """List up to 100 accessible files and folders. Omit folder_id for the library root."""
+        return library.listing(current_auth.get(), UUID(folder_id) if folder_id else None, offset=max(0,offset))
+
+    @mcp.tool(annotations=readonly)
+    def get_file_info(file_id: str) -> dict:
+        """Inspect a file's path, versions, format and extraction status without loading its text."""
+        return library.info(current_auth.get(), UUID(file_id))
+
+    @mcp.tool(annotations=readonly)
+    def search_library(query: str, folder_id: str | None = None, limit: int = 8) -> dict:
+        """Search approved memories and uploaded document sections, optionally within a folder tree."""
+        return library.search(current_auth.get(),query,UUID(folder_id) if folder_id else None,limit)
+
+    @mcp.tool(annotations=readonly)
+    def read_file_sections(file_id: str, version: int | None = None, start: int = 0, limit: int = 3) -> dict:
+        """Read bounded sections with page, paragraph or spreadsheet row references. Follow next_section to read more."""
+        return library.read(current_auth.get(),UUID(file_id),version,start,limit)
+
+    @mcp.tool(annotations=readonly)
+    def read_spreadsheet_rows(file_id: str, sheet: str = '', first_row: int = 1, last_row: int = 20) -> dict:
+        """Read indexed worksheet rows. At most 20 rows and 16,000 characters are returned. Extraction may be partial."""
+        auth=current_auth.get();info=library.info(auth,UUID(file_id))
+        if not info['name'].lower().endswith(('.xlsx','.csv')):return {'error':'Not a spreadsheet.'}
+        latest=info['versions'][0]
+        import re
+        selected=[];remaining=settings.max_context_chars
+        with repo._connection(auth) as c:
+            rows=c.execute('SELECT ordinal,location,content FROM central_brain.library_sections WHERE version_id=%s ORDER BY ordinal',
+                           (latest['id'],)).fetchall()
+        for row in rows:
+            match=re.search(r'(?:row|Row) (\d+)$',row['location'])
+            if match and (not sheet or row['location'].startswith('Sheet '+sheet+', row ')) and max(1,first_row)<=int(match[1])<=min(last_row,first_row+19):
+                row['content']=row['content'][:remaining];remaining-=len(row['content']);selected.append(row)
+                if remaining<=0 or len(selected)>=20:break
+        return {'file_id':file_id,'version':latest['version'],'state':latest['state'],'rows':selected,'reference_material':True}
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
+    def propose_file(name: str, content: str, source_reference: str, folder_id: str | None = None) -> dict:
+        """Propose a Markdown or plain-text file for human approval. Do not include credentials or unnecessary sensitive information."""
+        if not name.lower().endswith(('.md','.txt')) or len(content)>20000 or not 1<=len(source_reference)<=1000:
+            return {'error':'Use a .md or .txt filename, up to 20,000 characters, and a source reference.'}
+        node=library.upload(current_auth.get(),name,(content+'\n\nSource: '+source_reference).encode(),
+                            UUID(folder_id) if folder_id else None,proposed=True)
+        return {'file_id':node,'status':'proposed'}
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
+    def suggest_organization(action: str, name: str, folder_id: str | None = None, file_id: str | None = None) -> dict:
+        """Suggest action 'folder' to create a folder, or 'move' to rename or move an existing item. A human must approve."""
+        return library.suggest(current_auth.get(),action,{'name':name,'parent_id':folder_id,'node_id':file_id})
 
     return mcp

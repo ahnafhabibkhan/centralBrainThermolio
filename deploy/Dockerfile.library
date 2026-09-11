@@ -1,0 +1,8 @@
+# Extend the validated pilot runtime using locally verified Python wheels.
+FROM central-brain:access-20260910
+USER root
+COPY wheels /tmp/library-wheels
+RUN python -m pip install --no-index --no-cache-dir /tmp/library-wheels/*.whl && rm -rf /tmp/library-wheels
+COPY central_brain /usr/local/lib/python3.12/site-packages/central_brain
+COPY database /app/database
+USER app

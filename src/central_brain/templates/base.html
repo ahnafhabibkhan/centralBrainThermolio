@@ -9,6 +9,7 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar"><a class="brand" href="/" aria-label="Thermolio Central Brain home"><img class="brand-logo" src="/static/thermolio-logo.svg" alt="Thermolio" width="156" height="36"><span class="brand-product">Central Brain</span></a>
   {% if request.session.get('sid') %}<nav aria-label="Main navigation">
+    <a href="/library" {% if request.url.path.startswith('/library') %}aria-current="page"{% endif %}>Files</a>
     <a href="/" {% if request.url.path=='/' %}aria-current="page"{% endif %}>Memories</a><a href="/search" {% if request.url.path=='/search' %}aria-current="page"{% endif %}>Search</a><a href="/skills" {% if request.url.path=='/skills' %}aria-current="page"{% endif %}>Skills</a><a href="/getting-started" {% if request.url.path=='/getting-started' %}aria-current="page"{% endif %}>Getting started</a>
     <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="quiet">Sign out</button></form>
   </nav>{% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}</header>

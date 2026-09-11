@@ -41,6 +41,57 @@ Conditions:
   HasClaude: !Not [!Equals [!Ref ClaudeCallback, '']]
   HasEmail: !Not [!Equals [!Ref AlertEmail, '']]
 Resources:
+  LibraryFiles:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Tags: [{Key: Project, Value: CentralBrain}]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - Id: IncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+  LibraryFilesPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LibraryFiles
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt LibraryFiles.Arn, !Sub '${LibraryFiles.Arn}/*']
+            Condition: {Bool: {aws:SecureTransport: 'false'}}
+  LibraryObjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'}
+            Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AWS::StackName}-InstanceRole-*'
+      Policies:
+        - PolicyName: LibraryObjectsOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub '${LibraryFiles.Arn}/files/*'
   Backups:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -105,6 +156,9 @@ Resources:
               - Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub '${Backups.Arn}/releases/*'
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !GetAtt LibraryObjectRole.Arn
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/central-brain/pilot/environment'
@@ -432,6 +486,10 @@ Resources:
         - Type: SNS
           Address: !Ref Alerts
 Outputs:
+  LibraryBucket:
+    Value: !Ref LibraryFiles
+  LibraryRoleArn:
+    Value: !GetAtt LibraryObjectRole.Arn
   PublicUrl:
     Value: !If [CustomOrigin, !Ref PublicOrigin, !Sub 'https://${Address}.sslip.io']
   UserPoolId:

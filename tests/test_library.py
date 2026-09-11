@@ -165,12 +165,10 @@ def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     assert library.workspace_folders(pilot.auth)[0] == roots
     page = client.get('/library').text
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
-    assert 'Library navigation' in page and 'account-actions' in page
-    assert 'Main navigation' not in page
-    assert page.count('href="/library"') >= 1
-    sidebar = page.split('<aside class="folder-sidebar">', 1)[1].split('</aside>', 1)[0]
-    assert 'Memories' not in sidebar and 'Skills' not in sidebar
-    assert '▣ Memories' in page and '▣ Skills' in page
+    assert 'Folder hierarchy' in page and 'account-actions' in page
+    assert 'folder-sidebar' not in page and '>All files</a>' not in page
+    assert 'No approvals are waiting.' in page
+    assert 'data-tree-id=' in page and 'Memories' in page and 'Skills' in page
     assert client.get('/skills', follow_redirects=False).headers['location'] == f"/library?folder={roots['Skills']}"
     data = {'csrf_token': csrf, 'memory_type': 'fact', 'source_reference': 'Test file'}
     assert client.post('/new', data=data, files={'file': ('bad.txt', b'Fact')}).status_code == 422
@@ -200,8 +198,56 @@ def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     assert library.search(pilot.auth, 'boiler', roots['Skills'])['results'][0]['id'] == skill
     proposed = library.upload(pilot.auth, 'Humanizer.md', b'Improve the writing.', roots['Skills'], proposed=True)
     skill_page = client.get('/skills').text
-    assert skill_page.index('Review pending changes') < skill_page.index('Upload an original')
-    assert 'New skill: Humanizer.md' in skill_page
+    assert skill_page.index('id="approvals"') < skill_page.index('id="folder-content"')
+    assert 'Humanizer.md' in skill_page
+
+
+def test_context_changes_and_skill_catalog_respect_access(pilot, library):
+    import json
+    auth = pilot.auth
+    roots, _ = library.workspace_folders(auth)
+    reader = pilot.client.app.state.authenticator.verify('assistant')
+    colleague = pilot.client.app.state.authenticator.verify('colleague')
+    original = library.context(reader)['revision']
+    private = library.upload(auth, 'Secret_SKILL.md', b'Secret instructions.', visibility='private')
+    assert all(n['id'] != private for n in library.snapshot(colleague))
+    reduced = AuthContext(auth.principal.model_copy(update={'sensitivities': ['public']}))
+    assert library.context(reduced)['folders'] == []
+    node = library.upload(auth, 'Humanizer_SKILL.md', b'# Humanizer\nUse clear language.', proposed=True)
+    assert all(n['id'] != node for n in library.snapshot(reader))
+    assert any(n['id'] == node for n in library.snapshot(auth, True))
+    library.review(auth, node, True)
+    assert library.info(auth, node)['parent_id'] == roots['Skills']
+    approved = library.context(reader)['revision']
+    assert original != approved
+    assert process_one(library, auth)
+    while process_one(library, auth):
+        pass
+    indexed = library.context(reader)['revision']
+    assert approved != indexed
+    assert library.context(reader)['counts']['skills'] == 1
+    revision = library.context(colleague)['revision']
+    library.upload(auth, 'Secret_SKILL.md', b'Changed secret.', node_id=private)
+    assert library.context(colleague)['revision'] == revision
+    changed = library.upload(auth, 'Humanizer_SKILL.md', b'# Humanizer\nUse shorter sentences.', node_id=node)
+    assert changed == node and library.context(reader)['revision'] != indexed
+    def call(name, arguments):
+        response = pilot.client.post('/mcp/', headers={'Authorization': 'Bearer assistant',
+            'Accept': 'application/json, text/event-stream'}, json={'jsonrpc': '2.0', 'id': 33,
+            'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}})
+        result = response.json()['result']
+        assert not result.get('isError'), result
+        if name == 'list_skills':
+            return [item for block in result['content']
+                    for value in [json.loads(block['text'])]
+                    for item in (value if isinstance(value, list) else [value])]
+        return json.loads(result['content'][0]['text'])
+    catalog = call('list_skills', {})
+    assert any(item['name'] == 'Humanizer_SKILL.md' and item['version'] == '2' for item in catalog)
+    exact = call('get_skill', {'name': 'Humanizer_SKILL.md', 'version': '1'})
+    assert exact['definition'] == '# Humanizer\nUse clear language.'
+    assert call('get_workspace_context', {})['counts']['skills'] == 1
+    assert library.context(auth, True)['counts']['pending'] == 0
 
 
 def test_spreadsheet_mcp_bounds_and_sheet_names(pilot,library):

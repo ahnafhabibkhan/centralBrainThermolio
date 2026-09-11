@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import json
 import re
 from contextlib import contextmanager
 from pathlib import Path
@@ -167,7 +168,27 @@ class Library:
                     raise HTTPException(409, f"Rename the root file named {name} to make room for the workspace folder.")
             if roots.get("Memories"):
                 c.execute("UPDATE central_brain.library_nodes SET parent_id=%s "
-                          "WHERE kind='memory' AND parent_id IS NULL", (roots["Memories"],))
+                          "WHERE kind='memory' AND parent_id IS NULL AND sensitivity=ANY(%s)",
+                          (roots["Memories"], auth.principal.sensitivities))
+            if roots.get("Skills"):
+                candidates = c.execute(
+                    "SELECT id,name FROM central_brain.library_nodes WHERE kind='file' "
+                    "AND status='active' AND parent_id IS NULL AND lower(name) ~ '(^|_)skill[.]md$' "
+                    "AND sensitivity=ANY(%s)",
+                    (auth.principal.sensitivities,),
+                ).fetchall()
+                for candidate in candidates:
+                    collision = c.execute(
+                        "SELECT 1 FROM central_brain.library_nodes WHERE parent_id=%s "
+                        "AND lower(name)=lower(%s) AND status<>'rejected' LIMIT 1",
+                        (roots["Skills"], candidate["name"]),
+                    ).fetchone()
+                    if not collision:
+                        c.execute(
+                            "UPDATE central_brain.library_nodes SET parent_id=%s WHERE id=%s",
+                            (roots["Skills"], candidate["id"]),
+                        )
+                        self._audit(c, auth, "skill.auto_organize", candidate["id"])
             rows = c.execute(
                 "WITH RECURSIVE tree AS (SELECT id,parent_id,name,ARRAY[name] AS parts "
                 "FROM central_brain.library_nodes WHERE kind='folder' AND status='active' "
@@ -180,6 +201,84 @@ class Library:
                 (auth.principal.sensitivities, auth.principal.sensitivities),
             ).fetchall()
         return roots, rows
+
+    def category_folder(self, auth, name):
+        auth.require("reader")
+        with self.repo._connection(auth) as c:
+            row = c.execute(
+                "SELECT id FROM central_brain.library_nodes WHERE parent_id IS NULL "
+                "AND kind='folder' AND status='active' AND lower(name)=lower(%s) LIMIT 1",
+                (name,),
+            ).fetchone()
+        return row["id"] if row else None
+
+    def snapshot(self, auth, review=False):
+        """Read one consistent hierarchy with the caller's access and approval filters."""
+        auth.require("reviewer" if review else "reader")
+        self.project_memories(auth)
+        with self.repo._connection(auth) as c:
+            rows = c.execute(
+                """WITH RECURSIVE visible AS (
+                    SELECT n.*, CASE WHEN n.kind='memory' THEN m.status ELSE n.status END AS effective_status,
+                        m.memory_type,md5(m.content||m.source::text||m.metadata::text) AS content_hash,m.expires_at,
+                        v.version,v.size,v.state,v.sha256,
+                        CASE WHEN n.kind='memory' THEN m.created_at ELSE coalesce(v.created_at,n.created_at) END AS changed_at
+                    FROM central_brain.library_nodes n
+                    LEFT JOIN central_brain.memories m ON m.id=n.memory_id
+                    LEFT JOIN LATERAL (SELECT * FROM central_brain.library_versions WHERE node_id=n.id
+                        ORDER BY version DESC LIMIT 1) v ON true
+                    WHERE n.sensitivity=ANY(%(levels)s) AND
+                        ((n.kind<>'memory' AND (n.status='active' OR (%(review)s AND n.status='proposed'))) OR
+                         (n.kind='memory' AND m.deleted_at IS NULL AND m.sensitivity=ANY(%(levels)s)
+                          AND (m.expires_at IS NULL OR m.expires_at>now())
+                          AND (m.status='active' OR (%(review)s AND m.status='proposed'))))
+                ), tree AS (
+                    SELECT v.*,ARRAY[v.name] AS parts,ARRAY[v.id] AS ancestors FROM visible v WHERE parent_id IS NULL
+                    UNION ALL SELECT v.*,t.parts||v.name,t.ancestors||v.id FROM visible v JOIN tree t ON v.parent_id=t.id
+                    WHERE t.kind='folder' AND cardinality(t.parts)<32 AND NOT v.id=ANY(t.ancestors)
+                ) SELECT * FROM tree ORDER BY parts,id LIMIT 2001""",
+                {"levels": auth.principal.sensitivities, "review": review},
+            ).fetchall()
+        for row in rows:
+            row["status"] = row.pop("effective_status")
+            row["path"] = "/" + "/".join(row["parts"])
+            row["category"] = "memory" if row["kind"] == "memory" else (
+                "skill" if row["kind"] == "file" and row["parts"][0].lower() == "skills"
+                and row["name"].lower().endswith(".md") else row["kind"])
+        return rows
+
+    def context(self, auth, review=False):
+        """Recompute a compact workspace map after content or indexing changes."""
+        nodes = self.snapshot(auth, review)
+        with self.repo._connection(auth) as c:
+            registered = c.execute(
+                "SELECT s.name,v.version,v.content_sha256 FROM central_brain.skills s "
+                "JOIN central_brain.skill_versions v ON v.skill_id=s.id AND v.workspace_id=s.workspace_id "
+                "WHERE v.status='active' ORDER BY s.name,v.version"
+            ).fetchall()
+            suggestions = c.execute("SELECT id,action,payload,status FROM central_brain.library_suggestions "
+                                    "WHERE status='proposed' ORDER BY id").fetchall() if review else []
+        stable = json.dumps({"nodes": nodes, "registered": registered, "suggestions": suggestions}, default=str,
+                            sort_keys=True, separators=(",", ":"))
+        active = [n for n in nodes if n["status"] == "active"]
+        return {
+            "revision": hashlib.sha256(stable.encode()).hexdigest()[:16],
+            "counts": {
+                "files": sum(n["category"] == "file" for n in active),
+                "memories": sum(n["category"] == "memory" for n in active),
+                "skills": sum(n["category"] == "skill" for n in active) + len(registered),
+                "pending": sum(n["status"] == "proposed" for n in nodes) + len(suggestions),
+                "indexing": sum(n.get("state") in {"queued", "processing"} for n in nodes),
+            },
+            "folders": [{"id": str(n["id"]), "path": n["path"][:300]} for n in active
+                        if n["kind"] == "folder"][:40],
+            "recent_files": [{"id": str(n["id"]), "path": n["path"][:300],
+                              "version": n["version"], "state": n["state"], "category": n["category"]}
+                             for n in sorted(active, key=lambda n: n["changed_at"], reverse=True)
+                             if n["kind"] != "folder"][:8],
+            "truncated": len(nodes) > 2000 or sum(n["kind"] == "folder" for n in active) > 40,
+            "reference_material": True,
+        }
 
     def listing(self, auth, parent=None, review=False, offset=0):
         auth.require("reviewer" if review else "reader")
@@ -501,4 +600,20 @@ class Library:
                 "UPDATE central_brain.library_nodes SET status=%s WHERE id=%s",
                 ("active" if approve else "rejected", node_id),
             )
+            if approve and row["parent_id"] is None and re.search(r'(^|_)skill[.]md$', row["name"].lower()):
+                skills = c.execute(
+                    "SELECT id FROM central_brain.library_nodes WHERE parent_id IS NULL "
+                    "AND kind='folder' AND status='active' AND lower(name)='skills' LIMIT 1"
+                ).fetchone()
+                if skills:
+                    collision = c.execute(
+                        "SELECT 1 FROM central_brain.library_nodes WHERE parent_id=%s AND lower(name)=lower(%s) "
+                        "AND status<>'rejected' AND id<>%s LIMIT 1",
+                        (skills["id"], row["name"], node_id),
+                    ).fetchone()
+                    if not collision:
+                        c.execute(
+                            "UPDATE central_brain.library_nodes SET parent_id=%s WHERE id=%s",
+                            (skills["id"], node_id),
+                        )
             self._audit(c, auth, "file.approve" if approve else "file.reject", node_id)

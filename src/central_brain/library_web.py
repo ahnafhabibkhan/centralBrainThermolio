@@ -3,6 +3,8 @@ from uuid import UUID
 
 from fastapi import Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from .library import Library
 
@@ -10,6 +12,11 @@ from .library import Library
 def install_library_web(app, settings, repo, reviewer, page, check_csrf):
     library = Library(repo, settings)
     app.state.library = library
+
+    @app.get("/library/context", include_in_schema=False)
+    def workspace_context(request: Request):
+        return JSONResponse(jsonable_encoder(library.context(reviewer(request), True)),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/library", include_in_schema=False)
     def browse(
@@ -21,6 +28,19 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         auth = reviewer(request)
         library.project_memories(auth)
         roots, tree = library.workspace_folders(auth)
+        snapshot = library.snapshot(auth, True)
+        nodes = {row["id"]: dict(row, children=[]) for row in snapshot[:2000]}
+        hierarchy = []
+        for node in nodes.values():
+            if node["parent_id"] in nodes:
+                nodes[node["parent_id"]]["children"].append(node)
+            elif node["parent_id"] is None:
+                hierarchy.append(node)
+        def sort_tree(items):
+            items.sort(key=lambda n: (n["kind"] != "folder", n["name"].lower()))
+            for item in items:
+                sort_tree(item["children"])
+        sort_tree(hierarchy)
         rows = library.listing(auth, folder, True, offset)
         location = library.info(auth, folder, True) if folder else None
         section = location["path"].strip("/").split("/")[0] if location else ""
@@ -31,11 +51,16 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         suggestions = [dict(item) for item in suggestions]
         for suggestion in suggestions:
             parent_id = suggestion["payload"].get("parent_id")
-            suggestion["destination"] = library.path(auth, UUID(parent_id)) if parent_id else "All files"
+            try:
+                suggestion["destination"] = library.path(auth, UUID(parent_id)) if parent_id else "Workspace"
+            except HTTPException:
+                suggestion["destination"] = "Destination unavailable"
         return page(
             request,
             "library.html",
             title="Library",
+            hierarchy=hierarchy,
+            workspace_context=library.context(auth, True),
             section=section,
             skills=repo.skills(auth) if section == "Skills" else [],
             rows=rows,
@@ -45,7 +70,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             query=q,
             results=library.search(auth, q, folder)["results"] if q.strip() else [],
             suggestions=suggestions,
-            pending_files=[row for row in rows if row["status"] == "proposed"],
+            pending_files=[row for row in snapshot if row["status"] == "proposed"][:100],
         )
 
     @app.post("/library/folders", include_in_schema=False)

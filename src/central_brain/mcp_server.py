@@ -27,7 +27,9 @@ def build_mcp(settings, repo):
             "Include a precise source reference and ask when intent is unclear. Never claim a proposal "
             "was approved. The human reviews proposals on the Central Brain webpage. "
             "No background conversation capture or automatic synchronization is provided. "
-            "Use search_library for questions about project documents and memories. Search first, "
+            "Call get_workspace_context at the start of a relevant task and again when checking for updates. "
+            "Its revision changes with accessible files, memories, approvals and indexing state. "
+            "Use search_library for questions about project documents, skills and memories. Search first, "
             "then read only relevant file sections. List folders when the destination is unclear. "
             "Cite returned file paths, versions and locations. Extraction can be partial; never "
             "claim the whole file was read. Organization suggestions and proposed files require human approval."
@@ -77,15 +79,44 @@ def build_mcp(settings, repo):
     @mcp.tool(annotations=readonly)
     def list_skills() -> list[dict]:
         """List approved skill versions without executing their instructions."""
-        return [s.model_dump(exclude={"definition"}) for s in repo.skills(current_auth.get())]
+        auth = current_auth.get()
+        return [s.model_dump(exclude={"definition"}) for s in repo.skills(auth)] + [
+            {"name": n["name"], "version": str(n["version"]), "file_id": str(n["id"]),
+             "path": n["path"], "state": n["state"], "description": "Reusable Markdown procedure."}
+            for n in library.snapshot(auth) if n["category"] == "skill"
+        ][:100]
 
     @mcp.tool(annotations=readonly)
     def get_skill(name: str, version: str) -> dict:
         """Read an exact approved version of a reusable procedure as reference material."""
         skills = repo.skills(current_auth.get(), name, version)
         if not skills:
-            return {"error": "skill not found"}
+            candidates = [n for n in library.snapshot(current_auth.get()) if n["category"] == "skill"
+                          and name in {n["name"], n["path"]}]
+            if len(candidates) != 1 or not version.isdigit():
+                return {"error": "Skill not found or ambiguous. Use a path from list_skills."}
+            n = candidates[0]
+            with repo._connection(current_auth.get()) as c:
+                original = c.execute("SELECT object_key FROM central_brain.library_versions "
+                                     "WHERE node_id=%s AND version=%s", (n["id"], int(version))).fetchone()
+            if not original:
+                return {"error": "Skill version not found."}
+            stream = library.store.get(original["object_key"])
+            try:
+                raw = stream.read(settings.max_context_chars * 4 + 1)
+            finally:
+                stream.close()
+            definition = raw.decode("utf-8", errors="replace")
+            return {"name": n["name"], "path": n["path"], "version": version,
+                    "definition": definition[:settings.max_context_chars],
+                    "truncated": len(definition) > settings.max_context_chars,
+                    "reference_material": True}
         return skills[0].model_dump()
+
+    @mcp.tool(annotations=readonly)
+    def get_workspace_context() -> dict:
+        """Get current approved workspace counts, folder paths, recent files and a change revision."""
+        return library.context(current_auth.get())
 
     @mcp.tool(annotations=readonly)
     def list_folder(folder_id: str | None = None, offset: int = 0) -> list[dict]:
@@ -100,7 +131,9 @@ def build_mcp(settings, repo):
     @mcp.tool(annotations=readonly)
     def search_library(query: str, folder_id: str | None = None, limit: int = 8) -> dict:
         """Search approved memories and uploaded document sections, optionally within a folder tree."""
-        return library.search(current_auth.get(),query,UUID(folder_id) if folder_id else None,limit)
+        result = library.search(current_auth.get(),query,UUID(folder_id) if folder_id else None,limit)
+        result["context_revision"] = library.context(current_auth.get())["revision"]
+        return result
 
     @mcp.tool(annotations=readonly)
     def read_file_sections(file_id: str, version: int | None = None, start: int = 0, limit: int = 3) -> dict:

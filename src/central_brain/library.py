@@ -343,10 +343,12 @@ class Library:
         return row
 
     def usage(self, auth):
+        from .project_transfer import reserved_bytes
         with self.repo._connection(auth) as c:
             used = c.execute(
                 "SELECT coalesce(sum(size),0) AS used FROM central_brain.library_versions"
             ).fetchone()["used"]
+            used += reserved_bytes(c)
         return {
             "used": int(used),
             "limit": self.settings.library_quota_bytes,
@@ -543,6 +545,7 @@ class Library:
         connection=None, stored_keys=None,
     ):
         auth.require("writer" if proposed else "reviewer")
+        from .project_transfer import reserved_bytes
         name = filename(name)
         if Path(name).suffix.lower() not in EXTENSIONS:
             raise HTTPException(422, "Supported formats: PDF, DOCX, XLSX, CSV, MD, TXT, SVG, PNG, JPG, WEBP.")
@@ -558,6 +561,7 @@ class Library:
             used = c.execute(
                 "SELECT coalesce(sum(size),0) AS used FROM central_brain.library_versions"
             ).fetchone()["used"]
+            used += reserved_bytes(c)
             if used + len(data) > self.settings.library_quota_bytes:
                 raise HTTPException(413, "The shared file storage limit has been reached. All stored versions count toward the limit.")
             version = 1

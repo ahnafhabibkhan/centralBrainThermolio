@@ -18,13 +18,17 @@ from pathlib import Path
 class OriginalManifest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=240)
-    size_bytes: int = Field(gt=0, le=180000)
+    size_bytes: int = Field(gt=0, le=50 * 1024 * 1024)
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
 def prepare_transfer(library, settings, auth, folder_path, summary, source_reference, files,
                      destination_confirmed=False, summary_filename='summary.md'):
     auth.require('writer')
+    if sum(f.size_bytes for f in files) > 128000 or len(files) > 20 or any('/' in f.name for f in files):
+        from .project_transfer import prepare_project
+        return prepare_project(library, settings, auth, folder_path, summary, source_reference,
+                               files, destination_confirmed, summary_filename)
     parts = folder_parts(folder_path)
     if parts[0].lower() == 'memories':
         raise HTTPException(422, 'Choose a category folder for original attachments.')

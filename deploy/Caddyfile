@@ -1,12 +1,19 @@
 {$PUBLIC_URL} {
     header Strict-Transport-Security "max-age=31536000"
-    @upload path /library/upload
+    @upload path /library/upload /archive-original
     request_body @upload {
         max_size 51MB
     }
-    @small not path /library/upload
+    @small not path /library/upload /archive-original
     request_body @small {
         max_size 256KB
     }
-    reverse_proxy app:8080
+    handle /user-guide {
+        root * /config/public
+        rewrite * /Central-Brain-Business-Guide.html
+        file_server
+    }
+    handle {
+        reverse_proxy app:8080
+    }
 }

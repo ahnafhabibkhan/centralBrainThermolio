@@ -15,6 +15,8 @@ from .repository import PostgresMemoryRepository
 def purge_one(library, auth):
     """Retry original-object deletion after the database removal has committed."""
     from psycopg.types.json import Jsonb
+    from .project_transfer import expire_incomplete
+    expire_incomplete(library, auth)
     with library.repo._connection(auth) as c:
         row = c.execute('SELECT id,object_keys FROM central_brain.library_deletions WHERE purged_at IS NULL '
                         'ORDER BY deleted_at LIMIT 1 FOR UPDATE SKIP LOCKED').fetchone()

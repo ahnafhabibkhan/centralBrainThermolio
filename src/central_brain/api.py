@@ -37,7 +37,7 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        if scope['path'] == '/library/upload':
+        if scope['path'] in {'/library/upload', '/archive-original'}:
             # Bound the multipart body on disk before parsing, including requests without Content-Length.
             import tempfile
             with tempfile.TemporaryFile() as spool:
@@ -127,6 +127,18 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
         request_id = str(uuid4())
         key = request.client.host if request.client else "unknown"
         auth_marker = None
+        request_limit = settings.requests_per_minute
+        if request.url.path == '/archive-original':
+            from .project_transfer import transfer_identity
+            authorization = request.headers.get('authorization', '')
+            try:
+                if not authorization.startswith('Bearer '):
+                    raise HTTPException(401, 'A scoped file transfer is required.')
+                upload_auth, _ = transfer_identity(settings, authorization[7:])
+                key = 'upload:' + str(upload_auth.principal.actor_id)
+                request_limit = max(request_limit, 120)
+            except HTTPException as exc:
+                return JSONResponse({'detail': exc.detail}, exc.status_code)
         if request.url.path.startswith("/mcp"):
             try:
                 auth = await run_in_threadpool(
@@ -149,7 +161,7 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
                 buckets.move_to_end(key)
                 if len(buckets) > 4096:
                     buckets.popitem(last=False)
-                if count > settings.requests_per_minute:
+                if count > request_limit:
                     return JSONResponse({"detail": "too many requests"}, 429,
                                         headers={"Retry-After": "60"})
             response = await call_next(request)

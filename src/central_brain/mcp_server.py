@@ -56,10 +56,11 @@ def build_mcp(settings, repo):
             "only when the host exposes their contents. Preserve filenames and extensions. Never encode a summary as an original. "
             "Inventory attachments first and clearly identify any that could not be transferred. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
-            "Then use your code tool to POST the original bytes directly with the returned short-lived upload token. "
-            "Do not transcribe large base64 strings through model output. The handoff accepts 180 KB of raw originals. "
-            "The archive limit is 240 KB per proposal including encoded content. Use a distinct summary_filename when "
-            "adding another conversation to an existing folder that already contains summary.md. For larger or inaccessible originals, "
+            "Follow the returned transfer mode. Larger projects receive individual raw-byte upload URLs and tokens. "
+            "Transfer files sequentially with code, up to 50 MB each and 100 files per batch, preserving relative paths. "
+            "Repeat batches for larger projects. Do not transcribe large base64 strings through model output. "
+            "Only inline propose_chat_archive calls have a 240 KB limit; use prepare_chat_archive_upload for larger files. "
+            "Use a distinct summary_filename when adding another batch to an existing folder. For inaccessible originals, "
             "ask the user to upload them through Central Brain into the selected folder. Chat-local attachment links "
             "do not automatically transfer bytes, and saving a memory does not create folders or copy attachments. "
             "Never claim to have copied chat attachments that were not transferred. "
@@ -182,7 +183,8 @@ def build_mcp(settings, repo):
 
         Call find_folders first. If related folders exist, ask the user where to file the archive before
         setting destination_confirmed. SVG source uses utf8; binary originals use base64. Total payload
-        limit is 240 KB with up to 20 originals. Choose a distinct summary_filename for another conversation
+        limit is 240 KB with up to 20 originals. For larger projects use prepare_chat_archive_upload.
+        Choose a distinct summary_filename for another conversation
         in the same folder. Never fabricate inaccessible attachments or copy links
         in place of original bytes. Report omitted originals. Human approval creates all archive files.
         """
@@ -192,11 +194,13 @@ def build_mcp(settings, repo):
     def prepare_chat_archive_upload(folder_path: str, summary: str, source_reference: str,
                                     files: list[OriginalManifest], destination_confirmed: bool = False,
                                     summary_filename: str = 'summary.md') -> dict:
-        """Prepare a 15-minute, checksum-bound upload handoff for exact original chat attachments.
+        """Prepare checksum-bound uploads for originals up to 50 MB each, with 100 files per batch.
 
         Use this when originals are in your code tool's filesystem. Inventory names, byte sizes, and
         full SHA-256 hashes with code first. Find existing folders and confirm any related destination.
-        Up to 20 originals totaling 180 KB can be sent directly with code to the returned endpoint.
+        Names may include relative subfolder paths. Follow the returned mode and upload instructions.
+        Larger projects use individual raw-byte POSTs, without base64 or JSON. Upload sequentially.
+        Repeat preparation to resume missing files. Use distinct summary filenames for additional batches.
         No model transcription is needed. Upload success creates a pending archive, never approval.
         """
         return prepare_transfer(library, settings, current_auth.get(), folder_path, summary,

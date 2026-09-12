@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
+from contextlib import nullcontext
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,7 +56,7 @@ def find_folders(library, auth, category):
 
 
 def propose_archive(library, auth, folder_path, summary, source_reference, files, destination_confirmed=False,
-                    summary_filename='summary.md'):
+                    summary_filename='summary.md', connection=None):
     auth.require("writer")
     parts = folder_parts(folder_path)
     if parts[0].lower() == "memories":
@@ -87,7 +88,7 @@ def propose_archive(library, auth, folder_path, summary, source_reference, files
                                         if payload['folder_path'].lower() == n['path'].lower()
                                         or payload['folder_path'].lower().startswith(n['path'].lower() + '/')]
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    with library.repo._connection(auth) as c:
+    with nullcontext(connection) if connection else library.repo._connection(auth) as c:
         library._lock(c, auth)
         old = c.execute("SELECT id,status FROM central_brain.library_suggestions WHERE action='archive' "
                         "AND created_by=%s AND payload->>'fingerprint'=%s AND status<>'reject' LIMIT 1", (auth.principal.actor_id, fingerprint)).fetchone()
@@ -115,6 +116,13 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
         raise HTTPException(409, "This suggestion is no longer awaiting approval.")
     p = row["payload"]
     if approve:
+        if p.get('transfer_inventory'):
+            if any(not f['received'] for f in p['files']):
+                raise HTTPException(409, 'Some originals have not arrived. Complete the transfer before approving.')
+            # Release this reservation inside the transaction as files become library versions.
+            p['reserved_bytes'] = 0
+            c.execute('DELETE FROM central_brain.transfer_reservations WHERE id=%s', (sid,))
+            c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), sid))
         parent = UUID(p["parent_id"]) if p.get("parent_id") else None
         if row["action"] == "archive":
             for ancestor_id in p.get('destination_ancestors', []):
@@ -129,18 +137,40 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
                     parent = existing["id"]
                 else:
                     parent = library.folder(auth, part, parent, connection=c)
-            originals = [ArchiveFile.model_validate(f) for f in p["files"]]
+            originals = [] if p.get('transfer_inventory') else [ArchiveFile.model_validate(f) for f in p["files"]]
             manifest = "# Conversation source\n\n" + p["source_reference"] + "\n\n## Transferred originals\n\n"
             for item in originals:
                 data = item.data()
                 manifest += f"- {item.name}: {len(data)} bytes; SHA-256 {hashlib.sha256(data).hexdigest()}.\n"
-            if not originals:
+            if p.get('transfer_inventory'):
+                for item in p['files']:
+                    manifest += f"- {item['name']}: {item['size_bytes']} bytes; SHA-256 {item['sha256']}.\n"
+            if not originals and not p.get('transfer_inventory'):
                 manifest += "No original attachments were transferred.\n"
             entries = [(p.get('summary_filename', 'summary.md'), p["summary"].encode()),
                        (p.get('source_filename', 'source.md'), manifest.encode())]
             entries += [(item.name, item.data()) for item in originals]
             for name, data in entries:
                 library.upload(auth, name, data, parent, connection=c, stored_keys=stored_keys)
+            if p.get('transfer_inventory'):
+                for item in p['files']:
+                    destination = parent
+                    path = folder_parts(item['name'])
+                    for part in path[:-1]:
+                        existing = c.execute("SELECT id,kind,visibility FROM central_brain.library_nodes WHERE parent_id=%s "
+                                             "AND lower(name)=lower(%s) AND status='active'", (destination, part)).fetchone()
+                        if existing:
+                            library._get(c, auth, existing['id'])
+                            if existing['kind'] != 'folder' or existing['visibility'] != 'workspace':
+                                raise HTTPException(409, 'An original path conflicts with an existing item.')
+                            destination = existing['id']
+                        else:
+                            destination = library.folder(auth, part, destination, connection=c)
+                    with library.store.get(item['object_key']) as stream:
+                        data = stream.read(library.settings.library_file_bytes + 1)
+                    if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+                        raise HTTPException(409, 'A staged original failed its integrity check.')
+                    library.upload(auth, path[-1], data, destination, connection=c, stored_keys=stored_keys)
         elif row["action"] == "folder":
             existing = c.execute("SELECT id FROM central_brain.library_nodes WHERE kind='folder' AND status='active' "
                                  "AND parent_id IS NOT DISTINCT FROM %s AND lower(name)=lower(%s)", (parent, p["name"])).fetchone()
@@ -156,6 +186,9 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
         else:
             raise HTTPException(422, "Unknown organization action.")
     action = "approve" if approve else "reject"
+    if p.get('transfer_inventory'):
+        from .project_transfer import queue_cleanup
+        queue_cleanup(c, auth, sid, p)
     if row['action'] == 'archive':
         # Originals now live in the library, or were rejected. Keep no second content copy here.
         p = {key: p[key] for key in ('name', 'folder_path', 'fingerprint') if key in p}

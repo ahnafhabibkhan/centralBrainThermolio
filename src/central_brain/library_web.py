@@ -14,6 +14,18 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
     library = Library(repo, settings)
     app.state.library = library
 
+    @app.post('/archive-original', include_in_schema=False)
+    async def archive_original(request: Request):
+        from .project_transfer import receive_original, transfer_identity
+        from starlette.concurrency import run_in_threadpool
+        authorization = request.headers.get('authorization', '')
+        if not authorization.startswith('Bearer '):
+            raise HTTPException(401, 'A scoped file transfer is required.')
+        token = authorization[7:]
+        transfer_identity(settings, token)
+        result = await run_in_threadpool(receive_original, library, settings, token, await request.body())
+        return JSONResponse(jsonable_encoder(result), headers={'Cache-Control': 'no-store'})
+
     @app.post('/archive-transfer', include_in_schema=False)
     async def archive_transfer(request: Request):
         from .archive_transfer import receive_transfer
@@ -126,6 +138,10 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             raise HTTPException(404, 'Archive proposal not found.')
         files = []
         for raw in suggestion['payload']['files']:
+            if suggestion['payload'].get('transfer_inventory'):
+                files.append({'name': raw['name'], 'size': raw['size_bytes'], 'sha256': raw['sha256'],
+                              'preview': None, 'received': raw['received']})
+                continue
             item = ArchiveFile.model_validate(raw)
             data = item.data()
             files.append({'name': item.name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),

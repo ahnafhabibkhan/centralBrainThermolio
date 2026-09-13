@@ -55,6 +55,11 @@ def build_mcp(settings, repo):
             "Transfer actual SVG source as utf8 without rewriting it. Transfer other supported originals as exact base64 bytes "
             "only when the host exposes their contents. Preserve filenames and extensions. Never encode a summary as an original. "
             "Inventory attachments first and clearly identify any that could not be transferred. "
+            "A request to upload a project or folder means every accessible original in that folder and its subfolders, "
+            "not just the current conversation's attachment or a relevant subset. Enumerate the full accessible tree first. "
+            "If the host cannot list the whole project, explicitly state that coverage is unverified; do not infer completeness. "
+            "Report discovered, received, missing, and inaccessible file counts and paths across all batches. "
+            "Do not stop after a sample file, and do not call a project uploaded until every inventoried original is received. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
             "Follow the returned transfer mode. Larger projects receive individual raw-byte upload URLs and tokens. "
             "If code cannot reach those URLs, use upload_chat_archive_chunk through the connector only when "
@@ -202,6 +207,9 @@ def build_mcp(settings, repo):
 
         Use this when originals are in your code tool's filesystem. Inventory names, byte sizes, and
         full SHA-256 hashes with code first. Find existing folders and confirm any related destination.
+        For a whole-project request, enumerate every accessible file recursively before preparing batches.
+        Preserve the complete inventory across batches and reconcile received files against it at the end.
+        Report inaccessible files and unverified project coverage. Do not substitute one sample or a summary.
         Names may include relative subfolder paths. Follow the returned mode and upload instructions.
         Larger projects use individual raw-byte POSTs, without base64 or JSON. Upload sequentially.
         Repeat preparation to resume missing files. Use distinct summary filenames for additional batches.

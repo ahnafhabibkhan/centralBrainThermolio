@@ -220,6 +220,8 @@ main { max-width:1440px; padding:32px 36px 60px; }
 .approval-table tbody tr:nth-child(even) { background:#F0F6F4; }
 .approval-table small { display:block; color:var(--muted); margin-top:5px; }
 .approval-table form { display:flex; gap:7px; justify-content:flex-end; margin:0; }
+.approval-table th:last-child,.approval-table td:last-child { min-width:200px; }
+.approval-table form > button,.approval-table form > .button { flex:0 0 auto; white-space:nowrap; word-break:normal; overflow-wrap:normal; min-height:44px; padding:10px 14px; line-height:1.25; }
 .approval-table .approval-empty { padding:22px 12px; color:var(--muted); text-align:left; }
 .knowledge-browser { display:grid; grid-template-columns:minmax(240px,28%) minmax(0,1fr); border:1px solid #d6d8d9; border-radius:9px; background:#fff; min-height:520px; }
 .hierarchy-panel { padding:22px 16px; border-right:1px solid #d6d8d9; min-width:0; overflow:auto; }
@@ -325,6 +327,7 @@ dialog { max-height:90dvh; overscroll-behavior:contain; }
   .approval-table td:first-child,.file-table td:first-child { font-weight:600; }
   .approval-table td:nth-child(2)::before { content:"Destination: "; color:var(--muted); }
   .approval-table form { justify-content:flex-start; flex-wrap:wrap; padding-top:4px; }
+  .approval-table th:last-child,.approval-table td:last-child { min-width:0; }
   .approval-table td.approval-empty { padding:0; font-weight:400; }
   .file-table { border:0; }
   .file-table tr { grid-template-columns:repeat(3,minmax(0,1fr)); }

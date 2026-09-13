@@ -11,13 +11,13 @@ The website is publicly reachable so cloud assistants can connect, but memories 
 ## Finish your first sign-in
 
 1. Open Central Brain. Normal access goes directly to secure authentication, and an existing application session opens the workspace immediately.
-2. Use the permanent password already set for the invited owner account. Complete authenticator enrollment if prompted. Do not share the password, QR code, or MFA code in chat.
+2. Use the permanent password already set for the invited account. MFA is disabled, so no authenticator enrollment or code is required. Do not share the password in chat.
 3. After authentication, the site opens the review workspace. No second application sign-in is required.
 4. Ignore the earlier AWS notification confirmation email. The owner requested internal AWS management, and the stack's alert email parameter is now empty.
 5. Use the selected Thermolio Claude account for its connector. No Claude connector has been saved to an account yet.
 6. Complete each assistant's OAuth connection and run the acceptance checks below.
 
-Authenticator-app MFA has no separate MFA charge. The user pool uses Cognito Essentials with managed login version 2, which supports resource-bound access tokens. Essentials includes 10,000 direct or social monthly active users in the shared account or organization free allowance. The private pilot has one invited user. SMS and email MFA are not enabled. [AWS Cognito pricing](https://aws.amazon.com/cognito/pricing/).
+MFA was disabled at the workspace owner's request on September 13, 2026. The user pool continues to use Cognito Essentials with managed login version 2 and resource-bound access tokens. Users sign in with their email and password.
 
 The earlier classic hosted UI did not provide the access-token audience required by Central Brain. Managed login supplies this resource binding. Token signature, issuer, expiry, audience, client, user mapping, and permission checks remain enforced. [AWS resource binding documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-define-resource-servers.html#resource-server-resource-binding).
 
@@ -30,7 +30,7 @@ flowchart LR
     U[Thermolio reviewer] -->|Sign in and review| H
     H --> W[Central Brain application]
     W --> D[(PostgreSQL on encrypted EBS)]
-    W -. validates tokens .-> I[Cognito and MFA]
+    W -. validates tokens .-> I[Cognito sign-in]
     D -->|Daily encrypted backup| S[(Private S3 bucket)]
     B[Project budget] -->|Stop at USD 16| E[EC2 instance]
 ```
@@ -90,7 +90,7 @@ AWS Budgets is not a hard spending cap. Charges arrive late, some shared charges
 
 AWS does not allow deletion of a pending email subscription. The earlier unconfirmed invitation will expire automatically after 48 hours. Do not confirm it. [AWS SNS deletion behavior](https://docs.aws.amazon.com/sns/latest/dg/sns-delete-subscription-topic.html).
 
-The deployment uses standard CPU credits, Cognito Essentials with authenticator MFA, standard encrypted Parameter Store, and a single server. It does not provision RDS, a load balancer, a NAT gateway, paid DNS, or an inference API.
+The deployment uses standard CPU credits, Cognito Essentials with email and password sign-in, standard encrypted Parameter Store, and a single server. It does not provision RDS, a load balancer, a NAT gateway, paid DNS, or an inference API.
 
 ## Operations and recovery
 

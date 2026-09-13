@@ -64,7 +64,7 @@ Before deployment, pin the `postgres:17` and `caddy:2` references in the reviewe
 
 ## 4. Configure authentication and credentials
 
-The template creates a private Cognito user pool with software-token MFA. Create only the approved owner account after permission to send its invitation. Complete password and MFA enrollment, then record that account's immutable Cognito `sub`. Disable public self-registration.
+The template creates a private Cognito user pool with email and password sign-in. MFA is disabled. Create only approved accounts with authorization to send their invitations. Complete password setup, then record each account's immutable Cognito `sub`. Disable public self-registration.
 
 Fetch each client secret through an authenticated AWS administration session. Store the web client secret only on the host. Enter each assistant client secret only in the corresponding connector's secure setup form. Never put secrets into conversation messages, Git, URLs, screenshots, or memories.
 

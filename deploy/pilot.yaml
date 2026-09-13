@@ -256,8 +256,7 @@ Resources:
         AllowAdminCreateUserOnly: true
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
-      MfaConfiguration: 'ON'
-      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      MfaConfiguration: 'OFF'
       UserPoolTier: ESSENTIALS
       Policies:
         PasswordPolicy:

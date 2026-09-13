@@ -137,11 +137,11 @@ def test_pending_upload_ui_and_manual_completion(pilot, library):
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
     page = pilot.client.get('/library')
-    assert 'Waiting for upload: nested/missing.txt' in page.text
-    assert re.search(r'<button[^>]*disabled[^>]*>Approve all', page.text)
+    assert 'nested/missing.txt' in page.text and 'Original file not received' in page.text
+    assert 'Approve all (2)' in page.text
     detail = pilot.client.get('/library/suggestions/' + sid)
     assert 'Upload missing original' in detail.text
-    assert re.search(r'<button[^>]*disabled[^>]*>Approve archive', detail.text)
+    assert 'Review files individually' in detail.text
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text).group(1)
     url = '/library/suggestions/' + sid + '/original'
     assert pilot.client.post(url, data={'index': 0, 'csrf_token': 'wrong'}, files={'file': ('missing.txt', data)}).status_code == 403
@@ -151,7 +151,7 @@ def test_pending_upload_ui_and_manual_completion(pilot, library):
     assert 'Upload missing original' not in response.text
     assert not re.search(r'<button[^>]*disabled[^>]*>Approve archive', response.text)
     page = pilot.client.get('/library')
-    assert 'Approve all (1)' in page.text
+    assert 'Approve all (3)' in page.text
 
 
 def test_archive_review_http_reject_missing_and_approve_received(pilot, library):
@@ -163,7 +163,7 @@ def test_archive_review_http_reject_missing_and_approve_received(pilot, library)
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
     detail = pilot.client.get(path)
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text).group(1)
-    assert 'You can still reject this pending archive.' in detail.text
+    assert 'Files still uploading do not block the others.' in detail.text
     assert 'data-archive-review' in detail.text
     headers = {'Accept': 'application/json'}
     rejected_token = pilot.client.post(path, data={'action':'reject','csrf_token':'stale'}, headers=headers)

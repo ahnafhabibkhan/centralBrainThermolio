@@ -220,6 +220,12 @@ main { max-width:1440px; padding:32px 36px 60px; }
 .approval-table tbody tr:nth-child(even) { background:#F0F6F4; }
 .approval-table small { display:block; color:var(--muted); margin-top:5px; }
 .approval-table form { display:flex; gap:7px; justify-content:flex-end; margin:0; }
+.file-review-controls { display:flex; flex-wrap:wrap; justify-content:flex-start; align-items:center; gap:10px; }
+.approval-table td:last-child { text-align:left; vertical-align:top; padding:16px; }
+.approval-table th:last-child { text-align:left; }
+.file-review-controls .button,.file-review-controls button { flex:none; white-space:nowrap; min-height:44px; padding:10px 14px; }
+.file-review-controls .upload-action { color:var(--ink); background:#f5f6f7; border-color:#cdd2d7; }
+.file-review-controls form { flex-wrap:wrap; justify-content:flex-start; }
 .approval-table th:last-child,.approval-table td:last-child { min-width:200px; }
 .approval-table form > button,.approval-table form > .button { flex:0 0 auto; white-space:nowrap; word-break:normal; overflow-wrap:normal; min-height:44px; padding:10px 14px; line-height:1.25; }
 .approval-table .approval-empty { padding:22px 12px; color:var(--muted); text-align:left; }

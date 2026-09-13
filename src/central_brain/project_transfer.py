@@ -137,6 +137,8 @@ def store_original(library, auth, sid, index, data):
         if not p.get('transfer_inventory') or not 0 <= index < len(p['files']):
             raise HTTPException(404, 'Original not found in this transfer.')
         item = p['files'][claims['index']]
+        if p.get('reviews', {}).get(str(index)) == 'rejected':
+            raise HTTPException(409, 'This original was rejected. Prepare a new proposal to upload it.')
         if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise HTTPException(422, 'The original does not match its declared size and SHA-256 checksum.')
         duplicate = item['received']

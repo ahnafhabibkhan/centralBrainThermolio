@@ -20,6 +20,8 @@ def prepare(library, auth, archive_id, file_index):
         if not 0 <= file_index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][file_index]
+        if p.get('reviews', {}).get(str(file_index)) == 'rejected':
+            raise HTTPException(409, 'This original was rejected.')
         if f['received']:
             return {'received': True, 'name': f['name']}
         expiry = min(600, p['transfer_expires'] - int(time.time()))

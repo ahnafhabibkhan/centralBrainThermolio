@@ -73,12 +73,17 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                 (auth.principal.actor_id,),
             ).fetchall()
         suggestions = [dict(item) for item in suggestions]
+        from .archive_review import entries
+        archive_files = []
         for suggestion in suggestions:
             suggestion['missing_originals'] = [f['name'] for f in suggestion['payload'].get('files', [])
                 if suggestion['payload'].get('transfer_inventory') and not f['received']]
             suggestion['ready'] = not suggestion['missing_originals']
             if suggestion['action'] == 'archive':
                 suggestion['destination'] = suggestion['payload']['folder_path']
+                archive_files.extend({**{k:v for k,v in e.items() if k != 'data'}, 'archive_id': suggestion['id'],
+                                      'destination': suggestion['destination']} for e in entries(suggestion['payload'])
+                                     if e['state'] == 'pending')
                 continue
             parent_id = suggestion["payload"].get("parent_id")
             try:
@@ -88,8 +93,10 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         pending_files = [row for row in snapshot if row['status'] == 'proposed'][:100]
         with repo._connection(auth) as c:
             library._lock(c, auth)
-            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions if s['ready']]
+            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions if s['ready'] and s['action'] != 'archive']
             approval_items += [approval_item(library, auth, c, 'node', n['id']) for n in pending_files]
+            approval_items += [approval_item(library, auth, c, 'archive_file', e['archive_id'], e['index']) for e in archive_files if e['ready']]
+            approval_items = approval_items[:150]
         return page(
             request,
             "library.html",
@@ -105,6 +112,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             query=q,
             results=library.search(auth, q, folder)["results"] if q.strip() else [],
             suggestions=suggestions,
+            archive_files=archive_files,
             pending_files=pending_files,
             approval_items=approval_items,
         )
@@ -116,9 +124,10 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
 
         class Item(BaseModel):
             model_config = ConfigDict(extra='forbid')
-            kind: Literal['node', 'suggestion']
+            kind: Literal['node', 'suggestion', 'archive_file']
             id: UUID
             fingerprint: str
+            index: int | None = None
 
         auth = reviewer(request)
         check_csrf(request, csrf_token)
@@ -128,29 +137,52 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             selected = TypeAdapter(list[Item]).validate_json(items)
         except (ValidationError, ValueError) as exc:
             raise HTTPException(422, 'Invalid approval selection.') from exc
-        approve_batch(library, auth, [item.model_dump(mode='json') for item in selected])
+        approve_batch(library, auth, [item.model_dump(mode='json', exclude_none=True) for item in selected])
         return RedirectResponse('/library', 303)
 
     @app.get('/library/suggestions/{suggestion_id}', include_in_schema=False)
     def suggestion_detail(request: Request, suggestion_id: UUID):
         import hashlib
+        from .archive_review import entries
         auth = reviewer(request)
         with repo._connection(auth) as c:
             suggestion = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed'", (suggestion_id, auth.principal.actor_id)).fetchone()
         if not suggestion or suggestion['action'] != 'archive':
             raise HTTPException(404, 'Archive proposal not found.')
         files = []
-        for raw in suggestion['payload']['files']:
+        for index, raw in enumerate(suggestion['payload']['files']):
             if suggestion['payload'].get('transfer_inventory'):
                 files.append({'name': raw['name'], 'size': raw['size_bytes'], 'sha256': raw['sha256'],
-                              'preview': None, 'received': raw['received']})
+                              'preview': None, 'received': raw['received'],
+                              'state': suggestion['payload'].get('reviews', {}).get(str(index), 'pending')})
                 continue
             item = ArchiveFile.model_validate(raw)
             data = item.data()
             files.append({'name': item.name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
                           'preview': item.content[:12000] if item.encoding == 'utf8' else None})
         return page(request, 'archive.html', title='Review chat archive', suggestion=suggestion, files=files,
-                    transfer_ready=all(f.get('received', True) for f in files))
+                    review_files=entries(suggestion['payload']),
+                    transfer_ready=all(f.get('received', True) or f.get('state', 'pending') != 'pending' for f in files))
+
+    @app.post('/library/suggestions/{suggestion_id}/files/{index}/review', include_in_schema=False)
+    def review_archive_file(request: Request, suggestion_id: UUID, index: int,
+                            action: str = Form(...), csrf_token: str = Form(...)):
+        from .archive_review import review
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        if action not in {'approve', 'reject'}:
+            raise HTTPException(422, 'Unknown review action.')
+        if action == 'approve':
+            with repo._connection(auth) as c:
+                item = approval_item(library, auth, c, 'archive_file', suggestion_id, index)
+            approve_batch(library, auth, [item])
+        else:
+            with repo._connection(auth) as c:
+                library._lock(c, auth)
+                review(library, auth, suggestion_id, index, False, c, [])
+        if 'application/json' in request.headers.get('accept', ''):
+            return JSONResponse({'status': 'approved' if action == 'approve' else 'rejected'})
+        return RedirectResponse('/library', 303)
 
     @app.post('/library/suggestions/{suggestion_id}/original', include_in_schema=False)
     async def complete_original(request: Request, suggestion_id: UUID, index: int = Form(...),

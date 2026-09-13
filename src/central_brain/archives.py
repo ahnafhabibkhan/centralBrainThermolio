@@ -115,6 +115,14 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
     if not row:
         raise HTTPException(409, "This suggestion is no longer awaiting approval.")
     p = row["payload"]
+    if row['action'] == 'archive' and p.get('reviews'):
+        from .archive_review import entries, review
+        pending = [e for e in entries(p) if e['state'] == 'pending']
+        if approve and any(not e['ready'] for e in pending):
+            raise HTTPException(409, 'Some originals have not arrived. Complete their uploads first.')
+        for e in pending:
+            review(library, auth, sid, e['index'], approve, c, stored_keys)
+        return
     if approve:
         if p.get('transfer_inventory'):
             if any(not f['received'] for f in p['files']):
@@ -198,12 +206,21 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
     library._audit(c, auth, "organization." + action, sid)
 
 
-def approval_item(library, auth, c, kind, node_id):
-    if kind == "suggestion":
+def approval_item(library, auth, c, kind, node_id, index=None):
+    if kind in {"suggestion", "archive_file"}:
         row = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed' FOR UPDATE", (node_id, auth.principal.actor_id)).fetchone()
         if not row:
             raise HTTPException(409, "The approval queue changed. Refresh and review it again.")
         value = dict(row)
+        if kind == 'archive_file':
+            from .archive_review import entry
+            if row['action'] != 'archive':
+                raise HTTPException(409, 'This is not an archive.')
+            e = entry(row['payload'], index)
+            if e['state'] != 'pending' or not e['ready']:
+                raise HTTPException(409, 'This file is not ready for approval.')
+            value = {'file': {k:v for k,v in e.items() if k != 'data'},
+                     'path': row['payload']['folder_path'], 'ancestors': row['payload'].get('destination_ancestors', [])}
     elif kind == "node":
         row = library._get(c, auth, node_id, True)
         value = dict(row)
@@ -217,24 +234,30 @@ def approval_item(library, auth, c, kind, node_id):
             raise HTTPException(409, "The approval queue changed. Refresh and review it again.")
     else:
         raise HTTPException(422, "Unknown approval type.")
-    return {"kind": kind, "id": str(node_id), "fingerprint": hashlib.sha256(json.dumps(value, default=str, sort_keys=True).encode()).hexdigest()}
+    result = {"kind": kind, "id": str(node_id), "fingerprint": hashlib.sha256(json.dumps(value, default=str, sort_keys=True).encode()).hexdigest()}
+    if kind == 'archive_file':
+        result['index'] = index
+    return result
 
 
 def approve_batch(library, auth, items):
     auth.require("reviewer")
-    if not 1 <= len(items) <= 150 or len({(i['kind'], i['id']) for i in items}) != len(items):
+    if not 1 <= len(items) <= 150 or len({(i['kind'], i['id'], i.get('index')) for i in items}) != len(items):
         raise HTTPException(422, "Choose between 1 and 150 distinct pending approvals.")
     stored_keys = []
     try:
         with library.repo._connection(auth) as c:
             library._lock(c, auth)
             for item in sorted(items, key=lambda i: i["id"]):
-                current = approval_item(library, auth, c, item["kind"], UUID(item["id"]))
+                current = approval_item(library, auth, c, item["kind"], UUID(item["id"]), item.get('index'))
                 if current != item:
                     raise HTTPException(409, "A proposal changed. Refresh and review the queue before approving it.")
             for item in items:
                 node_id = UUID(item["id"])
-                if item["kind"] == "suggestion":
+                if item['kind'] == 'archive_file':
+                    from .archive_review import review
+                    review(library, auth, node_id, item['index'], True, c, stored_keys)
+                elif item["kind"] == "suggestion":
                     review_suggestion(library, auth, node_id, True, c, stored_keys)
                 else:
                     node = library._get(c, auth, node_id, True)

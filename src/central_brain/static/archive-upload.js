@@ -17,7 +17,7 @@ document.addEventListener('submit', async event => {
       const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
       const sha = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
       const matches = inventory.map((item, index) => ({item, index})).filter(({item}) =>
-        !item.received && item.size === file.size && item.sha256 === sha);
+        !item.received && (!item.state || item.state === 'pending') && item.size === file.size && item.sha256 === sha);
       if (!matches.length) throw new Error(`${file.name} does not match a missing original. Completed uploads are preserved.`);
       for (const {item, index} of matches) {
         progress.textContent = `Uploading ${item.name}. ${completed} files completed.`;

@@ -47,6 +47,8 @@ def upload_chunk(library, auth, archive_id, index, offset, content):
         if not 0 <= index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][index]
+        if p.get('reviews', {}).get(str(index)) == 'rejected':
+            raise HTTPException(409, 'This original was rejected.')
         if time.time() >= p['transfer_expires'] and not f['received']:
             raise HTTPException(409, 'The incomplete transfer expired.')
         if len(data) != min(CHUNK_BYTES, f['size_bytes'] - offset):

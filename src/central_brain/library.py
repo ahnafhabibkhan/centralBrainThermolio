@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
-EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt", ".svg", ".png", ".jpg", ".jpeg", ".webp"}
+EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt", ".svg", ".png", ".jpg", ".jpeg", ".webp"}
 
 
 def filename(value):

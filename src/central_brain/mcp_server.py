@@ -62,7 +62,10 @@ def build_mcp(settings, repo):
             "Do not stop after a sample file, and do not call a project uploaded until every inventoried original is received. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
             "Follow the returned transfer mode. Larger projects receive individual raw-byte upload URLs and tokens. "
-            "If code cannot reach those URLs, use upload_chat_archive_chunk through the connector only when "
+            "If code cannot reach those URLs, call prepare_original_upload for a direct private S3 upload, "
+            "send raw bytes from code using its multipart fields, then call complete_original_upload. "
+            "This keeps large files out of model context. If S3 is also blocked, show the browser completion URL. "
+            "Use upload_chat_archive_chunk through the connector only when "
             "the host can programmatically forward exact file bytes to tool arguments. Otherwise show completion_url. "
             "Call get_chat_archive_upload_status before saying an upload is complete or asking for approval. "
             "A blocked transfer is pending work; report its missing files instead of saying there is nothing new to save. "
@@ -223,6 +226,26 @@ def build_mcp(settings, repo):
         """Check which originals arrived and obtain offsets for resuming an upload. No file contents are returned."""
         from .connector_upload import status
         return status(library, current_auth.get(), UUID(archive_id))
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+    def prepare_original_upload(archive_id: str, file_index: int) -> dict:
+        """Get a private S3 multipart upload for one inventoried original, up to 50 MB.
+
+        Prefer this for large files when the code environment cannot reach Central Brain's upload host.
+        Send the original directly from code to S3 using the returned fields. No binary tool arguments
+        are needed. Then call complete_original_upload. If S3 is also blocked, use the browser upload.
+        """
+        from .direct_upload import prepare
+        return prepare(library, current_auth.get(), UUID(archive_id), file_index)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+    def complete_original_upload(archive_id: str, file_index: int) -> dict:
+        """Verify an original uploaded directly to S3 against its inventory and make it ready for review.
+
+        Call after S3 returns success. No file bytes are passed to this tool. Human approval is still required.
+        """
+        from .direct_upload import complete
+        return complete(library, current_auth.get(), UUID(archive_id), file_index)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
     def upload_chat_archive_chunk(archive_id: str, file_index: int, offset: int, content_base64: str) -> dict:

@@ -60,6 +60,10 @@ Resources:
           - Id: IncompleteUploads
             Status: Enabled
             AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+          - Id: DirectTransferStaging
+            Status: Enabled
+            Prefix: files/transfers/
+            ExpirationInDays: 1
   LibraryFilesPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:

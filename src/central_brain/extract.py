@@ -25,7 +25,7 @@ def extract(path, extension):
             total += len(content)
         return True
 
-    if extension in {".docx", ".xlsx"}:
+    if extension in {".docx", ".pptx", ".xlsx"}:
         with zipfile.ZipFile(path) as archive:
             if (
                 sum(i.file_size for i in archive.infolist()) > 100 * 1024 * 1024
@@ -58,6 +58,28 @@ def extract(path, extension):
                 f"Paragraph {index + 1}", "".join(t.text or "" for t in p.findall(".//w:t", ns))
             ):
                 break
+    elif extension == ".pptx":
+        import posixpath
+        from defusedxml.ElementTree import fromstring
+
+        with zipfile.ZipFile(path) as archive:
+            presentation = fromstring(archive.read('ppt/presentation.xml'))
+            relationships = fromstring(archive.read('ppt/_rels/presentation.xml.rels'))
+            targets = {r.get('Id'): r.get('Target') for r in relationships if r.get('TargetMode') != 'External'}
+            ns = {'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+                  'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
+            for index, slide in enumerate(presentation.findall('./p:sldIdLst/p:sldId', ns)):
+                if index >= 500:
+                    truncated = True
+                    break
+                rid = slide.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                target = targets[rid]
+                name = posixpath.normpath(target.lstrip('/') if target.startswith('/') else 'ppt/' + target)
+                if not name.startswith('ppt/slides/'):
+                    raise ValueError('Invalid slide relationship.')
+                root = fromstring(archive.read(name))
+                if not add(f'Slide {index + 1}', '\n'.join(t.text or '' for t in root.findall('.//a:t', ns))):
+                    break
     elif extension == ".xlsx":
         from openpyxl import load_workbook
 

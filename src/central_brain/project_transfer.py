@@ -85,7 +85,10 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
     return {'id': sid, 'status': 'awaiting_transfer', 'mode': 'individual_raw_files',
             'uploads': uploads, 'file_limit_bytes': settings.library_file_bytes,
             'completion_url': settings.public_url + '/library/suggestions/' + str(sid),
-            'connector_fallback': 'If the application upload host is unreachable, call prepare_original_upload '
+            'connector_fallback': 'For GitHub files, obtain fresh download_url values from the connected GitHub '
+                                 'Contents API at the inventoried commit and call import_github_original for each file. '
+                                 'Central Brain downloads and verifies the originals directly. '
+                                 'If the application upload host is unreachable, call prepare_original_upload '
                                  'for each missing file, POST its raw bytes directly to S3 with the returned multipart '
                                  'fields, then call complete_original_upload. This avoids binary tool arguments. '
                                  'If S3 is blocked too, use the browser completion_url. For small transfers only, '
@@ -99,7 +102,7 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                            '<upload_token>. Send the exact raw bytes, without base64 or JSON. Check every response. '
                            'On HTTP 429, wait for Retry-After before retrying. '
                            'Tokens last one hour; repeat the same preparation to resume for up to 24 hours. '
-                           'All originals must arrive before human approval. Preserve relative paths. '
+                           'Each received original can be approved independently. Missing files remain pending. Preserve relative paths. '
                            'For more than 100 files, use further batches with distinct summary filenames. '
                            'Never expose tokens or claim files were saved if an upload failed.'}
 

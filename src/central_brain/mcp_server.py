@@ -63,6 +63,10 @@ def build_mcp(settings, repo):
             "Report discovered, received, missing, and inaccessible file counts and paths across all batches. "
             "Do not stop after a sample file, and do not call a project uploaded until every inventoried original is received. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
+            "For GitHub originals, obtain a fresh download_url for each file from the connected GitHub Contents API "
+            "at the inventoried commit, then call import_github_original. Central Brain fetches and verifies the "
+            "original directly. Keep temporary download URLs private. GitHub access in chat is not automatically "
+            "shared with Central Brain; private files require an accessible temporary download_url. "
             "Follow the returned transfer mode. Larger projects receive individual raw-byte upload URLs and tokens. "
             "If code cannot reach those URLs, call prepare_original_upload for a direct private S3 upload, "
             "send raw bytes from code using its multipart fields, then call complete_original_upload. "
@@ -228,6 +232,20 @@ def build_mcp(settings, repo):
         """Check which originals arrived and obtain offsets for resuming an upload. No file contents are returned."""
         from .connector_upload import status
         return status(library, current_auth.get(), UUID(archive_id))
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
+    def import_github_original(archive_id: str, file_index: int, download_url: str) -> dict:
+        """Fetch one inventoried GitHub original directly, preserving its bytes, extension and folders.
+
+        Obtain a fresh raw.githubusercontent.com download_url from the GitHub Contents API at the
+        inventoried commit, using the user's connected GitHub access. Private repository URLs must
+        authorize that download. Do not pass a GitHub page URL, personal access token or chat summary.
+        URLs are used only for this request and are not saved. Central Brain checks the registered
+        size and SHA-256 before making this individual file ready for approval. Repeat for every
+        missing original, then check get_chat_archive_upload_status. Retries are idempotent.
+        """
+        from .github_import import import_original
+        return import_original(library, current_auth.get(), UUID(archive_id), file_index, download_url)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
     def prepare_original_upload(archive_id: str, file_index: int) -> dict:

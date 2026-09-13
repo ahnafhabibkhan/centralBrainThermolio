@@ -59,7 +59,7 @@ def test_project_transfer_large_files_subfolders_resume_and_approval(pilot, libr
         node = next(n for n in nodes if n['path'] == '/Projects/Upload test/' + path)
         with library.download(pilot.auth, node['id'])[1] as stream:
             assert stream.read() == data
-    for _ in keys:
+    for _ in range(len(keys) * 2):
         assert purge_one(library, pilot.auth)
     assert all(not (__import__('pathlib').Path(pilot.settings.library_local_path) / k).exists() for k in keys)
     assert send(pilot, prepared['uploads'][0], originals['Assets/logo.svg']).status_code == 409

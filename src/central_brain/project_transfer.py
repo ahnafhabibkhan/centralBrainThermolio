@@ -84,6 +84,12 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                             'upload_token': jwt.encode(claims, settings.session_secret, algorithm='HS256')})
     return {'id': sid, 'status': 'awaiting_transfer', 'mode': 'individual_raw_files',
             'uploads': uploads, 'file_limit_bytes': settings.library_file_bytes,
+            'completion_url': settings.public_url + '/library/suggestions/' + str(sid),
+            'connector_fallback': 'If direct HTTP is unavailable, call upload_chat_archive_chunk through MCP with '
+                                 'programmatically forwarded base64 chunks of 131072 raw bytes. Use '
+                                 'get_chat_archive_upload_status to resume. Never transcribe binary data manually. '
+                                 'If this host cannot forward file bytes to tools, open completion_url and upload '
+                                 'the originals there. A transfer waiting for bytes is not ready for approval.',
             'instruction': 'Upload each missing file sequentially from your code environment with an HTTP POST '
                            'to its upload_url, Content-Type: application/octet-stream and Authorization: Bearer '
                            '<upload_token>. Send the exact raw bytes, without base64 or JSON. Check every response. '
@@ -147,7 +153,9 @@ def queue_cleanup(c, auth, sid, p):
               "(id,workspace_id,created_by,visibility,sensitivity,name,path,kind,original_status,deleted_by,object_keys) "
               "VALUES(%s,%s,%s,'private','internal',%s,%s,'transfer','proposed',%s,%s) ON CONFLICT DO NOTHING",
               (sid, auth.principal.workspace_id, auth.principal.actor_id, p['name'], p['folder_path'],
-               auth.principal.actor_id, Jsonb([f['object_key'] for f in p['files']])))
+               auth.principal.actor_id, Jsonb([key for f in p['files'] for key in
+                   [f['object_key']] + [f['object_key'] + '_chunks/' + str(i)
+                    for i in range(len(f.get('chunks', [])) + 1)]])))
 
 
 def expire_incomplete(library, auth):

@@ -163,9 +163,11 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             data = await file.read(settings.library_file_bytes + 1)
             if len(data) > settings.library_file_bytes:
                 raise HTTPException(413, 'The file exceeds the 50 MB limit.')
-            await run_in_threadpool(store_original, library, auth, suggestion_id, index, data)
+            result = await run_in_threadpool(store_original, library, auth, suggestion_id, index, data)
         finally:
             await file.close()
+        if 'application/json' in request.headers.get('accept', ''):
+            return JSONResponse(jsonable_encoder(result), headers={'Cache-Control': 'no-store'})
         return RedirectResponse(f'/library/suggestions/{suggestion_id}', 303)
 
     @app.post("/library/folders", include_in_schema=False)

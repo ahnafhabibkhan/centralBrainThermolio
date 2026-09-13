@@ -57,6 +57,10 @@ def build_mcp(settings, repo):
             "Inventory attachments first and clearly identify any that could not be transferred. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
             "Follow the returned transfer mode. Larger projects receive individual raw-byte upload URLs and tokens. "
+            "If code cannot reach those URLs, use upload_chat_archive_chunk through the connector only when "
+            "the host can programmatically forward exact file bytes to tool arguments. Otherwise show completion_url. "
+            "Call get_chat_archive_upload_status before saying an upload is complete or asking for approval. "
+            "A blocked transfer is pending work; report its missing files instead of saying there is nothing new to save. "
             "Transfer files sequentially with code, up to 50 MB each and 100 files per batch, preserving relative paths. "
             "Repeat batches for larger projects. Do not transcribe large base64 strings through model output. "
             "Only inline propose_chat_archive calls have a 240 KB limit; use prepare_chat_archive_upload for larger files. "
@@ -205,6 +209,25 @@ def build_mcp(settings, repo):
         """
         return prepare_transfer(library, settings, current_auth.get(), folder_path, summary,
                                 source_reference, files, destination_confirmed, summary_filename)
+
+    @mcp.tool(annotations=readonly)
+    def get_chat_archive_upload_status(archive_id: str) -> dict:
+        """Check which originals arrived and obtain offsets for resuming an upload. No file contents are returned."""
+        from .connector_upload import status
+        return status(library, current_auth.get(), UUID(archive_id))
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+    def upload_chat_archive_chunk(archive_id: str, file_index: int, offset: int, content_base64: str) -> dict:
+        """Transfer original bytes through MCP when the code environment cannot POST to the upload URL.
+
+        Use code to forward exact base64 chunks of 131072 raw bytes, except the final shorter chunk.
+        Never manually transcribe binary content. Call get_chat_archive_upload_status first, use its
+        file index and next_offset, and send chunks sequentially. Retries are idempotent. Completion
+        verifies the entire file checksum and still requires human approval. If the host cannot
+        forward file bytes programmatically to MCP tools, report that limitation and show completion_url.
+        """
+        from .connector_upload import upload_chunk
+        return upload_chunk(library, current_auth.get(), UUID(archive_id), file_index, offset, content_base64)
 
     @mcp.tool(annotations=readonly)
     def get_file_info(file_id: str) -> dict:

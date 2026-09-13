@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from authlib.integrations.starlette_client import OAuth
+from authlib.integrations.base_client.errors import MismatchingStateError
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -164,6 +165,18 @@ def install_web(app, settings, repo):
             stage = "workspace session"
             await run_in_threadpool(establish, request, token["access_token"],
                                     min(token.get("expires_at", time.time()), time.time() + 3600))
+        except MismatchingStateError:
+            # Restart with fresh state and PKCE, never accept an unbound callback.
+            last_restart = request.session.get("oauth_restart_at", 0)
+            restart = bool(request.session) and time.time() - last_restart > 300
+            request.session.clear()
+            request.session["oauth_restart_at"] = time.time()
+            logger.warning("OAuth callback state expired or missing; restarting=%s",
+                           restart)
+            if restart:
+                return RedirectResponse("/auth/login", 303)
+            return page(request, "login.html", title="Sign-in needs attention",
+                        error="Your sign-in session could not be restored. Allow cookies for this site, then select Sign in to Thermolio to try again.")
         except Exception as exc:  # noqa: BLE001  OAuth failures must not expose credentials.
             logger.warning("OAuth callback failed at %s: %s (cause: %s)", stage,
                            type(exc).__name__, type(exc.__cause__).__name__)

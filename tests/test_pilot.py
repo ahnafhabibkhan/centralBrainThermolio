@@ -283,3 +283,26 @@ def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
         rejected = client.get('/auth/callback')
         assert 'Sign-in failed' in rejected.text
         assert client.get('/', follow_redirects=False).status_code == 303
+
+
+def test_expired_oauth_state_restarts_once_without_accepting_callback(pilot, monkeypatch):
+    settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
+        environment='production', public_url='https://brain.example',
+        central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
+        oauth_client_ids=['web'], oauth_web_client_id='web')
+    app = create_app(pilot.repo, settings)
+    with TestClient(app, base_url=settings.public_url) as client:
+        # No cookie means no automatic loop when the browser blocks cookies.
+        missing = client.get('/auth/callback?code=unused&state=missing', follow_redirects=False)
+        assert missing.status_code == 200
+        assert 'Allow cookies' in missing.text
+        assert client.get('/', follow_redirects=False).status_code == 303
+        client.cookies.clear()
+        client.get('/login?signed_out=true')
+        expired = client.get('/auth/callback?code=unused&state=expired', follow_redirects=False)
+        assert expired.status_code == 303
+        assert expired.headers['location'] == '/auth/login'
+        repeated = client.get('/auth/callback?code=unused&state=expired', follow_redirects=False)
+        assert repeated.status_code == 200
+        assert 'Allow cookies' in repeated.text
+        assert client.get('/', follow_redirects=False).status_code == 303

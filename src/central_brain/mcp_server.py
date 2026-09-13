@@ -52,6 +52,9 @@ def build_mcp(settings, repo):
             "and ask whether to use one or a separate folder. Only set destination_confirmed after the user agrees. "
             "For a new category, propose a descriptive path such as Brand/Thermolio/Logo or Projects/<project>/Chats/<date-topic>. "
             "Each original, summary.md, and source.md is reviewed independently. Approving one creates its destination folders. "
+            "Direct users to /library#approvals, never to an archive page or an archive ID to approve. "
+            "The workspace has Ready to approve and Finish upload filters. Transfers are internal implementation details. "
+            "Received files appear immediately as individual approvals even while other originals are missing. "
             "The workspace shows one approval row per file. Approve all selects ready files and excludes missing originals. "
             "Generated summaries can be approved before originals arrive. Never treat an inventory as file delivery. "
             "Transfer actual SVG source as utf8 without rewriting it. Transfer other supported originals as exact base64 bytes "
@@ -197,14 +200,14 @@ def build_mcp(settings, repo):
     def propose_chat_archive(folder_path: str, summary: str, source_reference: str,
                              files: list[ArchiveFile], destination_confirmed: bool = False,
                              summary_filename: str = 'summary.md') -> dict:
-        """Propose a folder tree, summary.md, source.md, and exact original attachments as one reviewable archive.
+        """Propose a folder tree, summary.md, source.md, and original attachments for individual workspace review.
 
         Call find_folders first. If related folders exist, ask the user where to file the archive before
         setting destination_confirmed. SVG source uses utf8; binary originals use base64. Total payload
         limit is 240 KB with up to 20 originals. For larger projects use prepare_chat_archive_upload.
         Choose a distinct summary_filename for another conversation
         in the same folder. Never fabricate inaccessible attachments or copy links
-        in place of original bytes. Report omitted originals. Human approval creates all archive files.
+        in place of original bytes. Report omitted originals. Each file is approved in the workspace independently.
         """
         return propose_archive(library, current_auth.get(), folder_path, summary, source_reference, files, destination_confirmed, summary_filename)
 

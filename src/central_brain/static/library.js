@@ -10,10 +10,101 @@
   let dialogRequest = 0;
   let dirty = false;
   let detailResource = null;
+  let queueFilter = 'ready';
   const parser = new DOMParser();
   history.replaceState(null, '', '/library');
 
   const folderURL = () => '/library' + (selected ? '?folder=' + encodeURIComponent(selected) : '');
+  function filterQueue() {
+    const panel = document.getElementById('approvals');
+    const rows = [...panel.querySelectorAll('[data-review-state]')];
+    rows.forEach(row => { row.hidden = queueFilter !== 'all' && row.dataset.reviewState !== queueFilter; });
+    panel.querySelectorAll('[data-queue-filter]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.queueFilter === queueFilter));
+    });
+    panel.querySelectorAll('[data-queue-count]').forEach(count => {
+      count.textContent = rows.filter(row => row.dataset.reviewState === count.dataset.queueCount).length;
+    });
+    panel.querySelector('.approval-count').textContent = rows.length;
+    panel.querySelector('[data-queue-empty]').hidden = rows.some(row => !row.hidden);
+    panel.querySelector('.bulk-approval').hidden = queueFilter === 'upload';
+  }
+  async function postJSON(url, data) {
+    const response = await fetch(url, {method: 'POST', body: data, credentials: 'same-origin',
+      redirect: 'manual', headers: {Accept: 'application/json'}});
+    if (response.type === 'opaqueredirect' || response.status === 401) {
+      throw new Error('Your session has ended. Sign in and reopen the workspace to continue.');
+    }
+    const result = await response.json();
+    if (!response.ok) {
+      const error = new Error(typeof result.detail === 'string' ? result.detail : 'The request could not be completed.');
+      error.status = response.status;
+      throw error;
+    }
+    return result;
+  }
+  async function approveQueue(form) {
+    if (busy) return;
+    busy = true;
+    const panel = document.getElementById('approvals');
+    const buttons = [...panel.querySelectorAll('form button')];
+    buttons.forEach(button => { button.disabled = true; });
+    const progress = panel.querySelector('[data-queue-progress]');
+    const notice = panel.querySelector('[data-queue-status]');
+    let completed = 0;
+    let outcome;
+    const conflicts = [];
+    const approvedKeys = new Set();
+    try {
+      const items = JSON.parse(form.elements.items.value);
+      progress.max = items.length;
+      progress.value = 0;
+      progress.hidden = false;
+      const key = item => `${item.kind}:${item.id}:${item.index ?? ''}`;
+      async function submit(batch) {
+        const data = new FormData();
+        data.set('csrf_token', form.elements.csrf_token.value);
+        data.set('items', JSON.stringify(batch));
+        const result = await postJSON('/library/approve-all', data);
+        completed += result.approved;
+        batch.forEach(item => approvedKeys.add(key(item)));
+        panel.querySelectorAll('[data-review-key]').forEach(row => {
+          if (approvedKeys.has(row.dataset.reviewKey)) row.remove();
+        });
+        form.elements.items.value = JSON.stringify(items.filter(item => !approvedKeys.has(key(item))));
+        filterQueue();
+      }
+      for (let start = 0; start < items.length; start += 3) {
+        notice.textContent = `Approving items ${start + 1} to ${Math.min(start + 3, items.length)} of ${items.length}. ${completed} approved.`;
+        const batch = items.slice(start, start + 3);
+        try { await submit(batch); }
+        catch (error) {
+          if (![409, 422].includes(error.status)) throw error;
+          // These responses confirm that the whole group rolled back. Isolate the conflicts.
+          for (const item of batch) {
+            try { await submit([item]); }
+            catch (itemError) {
+              if (![409, 422].includes(itemError.status)) throw itemError;
+              const row = [...panel.querySelectorAll('[data-review-key]')].find(row => row.dataset.reviewKey === key(item));
+              const name = row?.querySelector('td')?.firstChild?.textContent?.trim() || 'A proposal';
+              conflicts.push(`${name}: ${itemError.message}`);
+            }
+          }
+        }
+        progress.value = Math.min(start + 3, items.length);
+      }
+      outcome = `${completed} items approved. The workspace context has been updated.`;
+      if (conflicts.length) outcome += ` ${conflicts.length} items still need attention. ${conflicts.slice(0, 5).join(' ')}`;
+    } catch (error) {
+      outcome = `${completed} approvals confirmed. ${error.message} Completed approvals are preserved. Check the refreshed queue before retrying.`;
+    } finally {
+      try { await refresh(true); }
+      catch (_) { outcome += ' Reload the workspace to check the latest status before continuing.'; }
+      busy = false;
+      buttons.forEach(button => { button.disabled = false; });
+      document.querySelector('[data-queue-status]').textContent = outcome;
+    }
+  }
   function message(text, error = false) {
     status.textContent = text;
     status.classList.toggle('error', error);
@@ -77,6 +168,7 @@
     const open = new Set([...document.querySelectorAll('#folder-tree .tree-branch.expanded')].map(d => d.dataset.treeId));
     const focusedToggle = document.activeElement?.closest('.tree-toggle')?.closest('.tree-branch')?.dataset.treeId;
     for (const id of ['approvals', 'context-strip', 'folder-tree']) replaceRegion(id, doc);
+    filterQueue();
     document.querySelectorAll('#folder-tree .tree-branch').forEach(d => expandBranch(d, open.has(d.dataset.treeId)));
     if (focusedToggle) document.querySelector(`#folder-tree [data-tree-id="${CSS.escape(focusedToggle)}"] .tree-toggle`)?.focus({preventScroll: true});
     if (includeFolder && !dirty) replaceRegion('folder-content', doc);
@@ -123,6 +215,13 @@
   async function openDetails(url) {
     const request = ++dialogRequest;
     const result = await html(url);
+    if (result.doc.getElementById('library-app')) {
+      if (request !== dialogRequest) return;
+      if (dialog.open) dialog.close();
+      await refresh(false);
+      document.getElementById('approvals').scrollIntoView({block: 'start'});
+      return;
+    }
     if (request === dialogRequest) showDetails(result.doc, result.url);
   }
   document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
@@ -133,6 +232,12 @@
     if (event.target.closest('#folder-content form')) dirty = true;
   });
   document.addEventListener('click', event => {
+    const queueToggle = event.target.closest('[data-queue-filter]');
+    if (queueToggle) {
+      queueFilter = queueToggle.dataset.queueFilter;
+      filterQueue();
+      return;
+    }
     const toggle = event.target.closest('.tree-toggle');
     if (toggle) {
       const branch = toggle.closest('.tree-branch');
@@ -166,6 +271,10 @@
     if (formURL.pathname === '/logout') return;
     event.preventDefault();
     if (busy) return;
+    if (form.matches('.bulk-approval')) {
+      await approveQueue(form);
+      return;
+    }
     const submitter = event.submitter;
     const action = submitter?.getAttribute('formaction') || formURL.href;
     const data = new FormData(form);
@@ -190,6 +299,15 @@
     buttons.forEach(button => { button.disabled = true; });
     message('Saving your changes.');
     try {
+      const queueAction = form.hasAttribute('data-queue-upload') || /^\/library\/suggestions\/[^/]+\/files\/[^/]+\/review$/.test(new URL(action).pathname);
+      if (queueAction) {
+        document.querySelector('[data-queue-status]').textContent = form.hasAttribute('data-queue-upload') ? 'Uploading the original file.' : 'Saving your review.';
+        await postJSON(action, data);
+        if (form.hasAttribute('data-queue-upload')) queueFilter = 'ready';
+        await refresh(true);
+        document.querySelector('[data-queue-status]').textContent = 'Saved. Received files are ready for approval.';
+        return;
+      }
       const result = await html(action, {method: 'POST', body: data});
       const deleting = /^\/library\/file\/[0-9a-f-]+\/delete$/.test(new URL(action).pathname);
       if (deleting && result.doc.getElementById('library-app')) {
@@ -207,6 +325,7 @@
                        : 'Saved. The workspace context has been updated.');
     } catch (error) {
       message(error.message, true);
+      if (form.closest('#approvals')) document.querySelector('[data-queue-status]').textContent = error.message;
     } finally {
       busy = false;
       buttons.forEach((button, index) => { button.disabled = disabledBefore[index]; });
@@ -214,7 +333,7 @@
   });
   // Other assistants can update this workspace while the page stays open.
   setInterval(async () => {
-    if (busy || document.hidden) return;
+    if (busy || document.hidden || document.querySelector('.queue-upload[open]')) return;
     let ownsBusy = false;
     try {
       const response = await fetch('/library/context', {credentials: 'same-origin', cache: 'no-store', redirect: 'manual'});
@@ -235,4 +354,5 @@
     }
   }, 20000);
   selectedTree(true);
+  filterQueue();
 })();

@@ -154,12 +154,15 @@ def test_archive_limits_privacy_conflicts_and_web_batch(pilot, library):
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
     items = html.unescape(re.search(r'name="items" value="([^"]+)"', page)[1])
     preview = client.get(f"/library/suggestions/{proposal['id']}")
-    assert '&lt;script&gt;bad()&lt;/script&gt;' in preview.text
+    assert '<script>bad()</script>' not in preview.text
+    download = client.get(f"/library/suggestions/{proposal['id']}/files/-1/download")
+    assert '<script>bad()</script>' in download.text
+    assert download.headers['content-disposition'].startswith('attachment;')
     assert 'logo.svg' in preview.text
     assert client.post('/library/approve-all', data={'items':items,'csrf_token':'bad'}).status_code == 403
     result = client.post('/library/approve-all', data={'items':items,'csrf_token':csrf})
     assert result.status_code == 200
-    assert 'No approvals are waiting' in result.text
+    assert 'No items are waiting' in result.text
     assert '/Assets/logo.svg' in [n['path'] for n in library.snapshot(pilot.auth)]
     second = propose_archive(library, pilot.auth, 'Assets', 'Other summary', 'Source', [], True)
     with pytest.raises(HTTPException) as error:

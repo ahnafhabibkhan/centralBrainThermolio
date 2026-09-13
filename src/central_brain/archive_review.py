@@ -6,30 +6,29 @@ from psycopg.types.json import Jsonb
 
 
 def entries(p):
-    from .archives import ArchiveFile
-    values = [(-1, p.get('summary_filename', 'summary.md'), p['summary'].encode()),
-              (-2, p.get('source_filename', 'source.md'),
-               ('# Conversation source\n\n' + p['source_reference'] +
-                '\n\n## Requested originals\n\nThis inventory does not confirm delivery or approval.\n\n' +
-                '\n'.join('- ' + f['name'] for f in p['files'])).encode())]
-    result = []
-    for index, name, data in values:
-        result.append({'index': index, 'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
-                       'ready': True, 'data': data, 'state': p.get('reviews', {}).get(str(index), 'pending')})
-    for index, f in enumerate(p['files']):
-        data = None if p.get('transfer_inventory') else ArchiveFile.model_validate(f).data()
-        result.append({'index': index, 'name': f['name'], 'size': f['size_bytes'] if data is None else len(data),
-                       'sha256': f['sha256'] if data is None else hashlib.sha256(data).hexdigest(),
-                       'ready': f.get('received', True), 'data': data,
-                       'state': p.get('reviews', {}).get(str(index), 'pending')})
-    return result
+    return [entry(p, i) for i in [-1, -2, *range(len(p['files']))]]
 
 
 def entry(p, index):
-    value = next((v for v in entries(p) if v['index'] == index), None)
-    if not value:
-        raise HTTPException(404, 'Archive file not found.')
-    return value
+    # Decode only the selected original. Decoding a whole project for each approval
+    # made bulk review repeatedly process the same large binary files.
+    if index in (-1, -2):
+        name = p.get('summary_filename', 'summary.md') if index == -1 else p.get('source_filename', 'source.md')
+        data = p['summary'].encode() if index == -1 else (
+            '# Conversation source\n\n' + p['source_reference'] +
+            '\n\n## Requested originals\n\nThis inventory does not confirm delivery or approval.\n\n' +
+            '\n'.join('- ' + f['name'] for f in p['files'])).encode()
+        return {'index': index, 'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+                'ready': True, 'data': data, 'state': p.get('reviews', {}).get(str(index), 'pending')}
+    if not isinstance(index, int) or not 0 <= index < len(p['files']):
+        raise HTTPException(404, 'File proposal not found.')
+    from .archives import ArchiveFile
+    f = p['files'][index]
+    data = None if p.get('transfer_inventory') else ArchiveFile.model_validate(f).data()
+    return {'index': index, 'name': f['name'], 'size': f['size_bytes'] if data is None else len(data),
+            'sha256': f['sha256'] if data is None else hashlib.sha256(data).hexdigest(),
+            'ready': f.get('received', True), 'data': data,
+            'state': p.get('reviews', {}).get(str(index), 'pending')}
 
 
 def review(library, auth, sid, index, approve, c, stored_keys):
@@ -73,10 +72,21 @@ def review(library, auth, sid, index, approve, c, stored_keys):
                 data = stream.read(library.settings.library_file_bytes + 1)
         if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise HTTPException(409, 'This original failed verification. Upload the correct file again.')
-        library.upload(auth, PurePosixPath(item['name']).name, data, parent, connection=c, stored_keys=stored_keys)
+        name = PurePosixPath(item['name']).name
+        existing = c.execute("SELECT id,kind,visibility FROM central_brain.library_nodes WHERE parent_id IS NOT DISTINCT FROM %s "
+                             "AND lower(name)=lower(%s) AND status='active'", (parent, name)).fetchone()
+        if existing:
+            library._get(c, auth, existing['id'])
+            version = c.execute('SELECT sha256,size FROM central_brain.library_versions WHERE node_id=%s ORDER BY version DESC LIMIT 1',
+                                (existing['id'],)).fetchone()
+            if (existing['kind'] != 'file' or existing['visibility'] != 'workspace' or not version
+                    or version['sha256'] != item['sha256'] or version['size'] != item['size']):
+                raise HTTPException(409, f'{name} already exists with different contents. Review or rename this proposal before approving it.')
+        else:
+            library.upload(auth, name, data, parent, connection=c, stored_keys=stored_keys)
     p.setdefault('reviews', {})[str(index)] = 'approved' if approve else 'rejected'
     status = 'proposed'
-    if all(e['state'] != 'pending' for e in entries(p)):
+    if all(p['reviews'].get(str(i), 'pending') != 'pending' for i in [-1, -2, *range(len(p['files']))]):
         if p.get('transfer_inventory'):
             queue_cleanup(c, auth, sid, p)
         status = 'approve' if any(v == 'approved' for v in p['reviews'].values()) else 'reject'

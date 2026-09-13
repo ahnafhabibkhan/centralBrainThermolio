@@ -137,32 +137,42 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             selected = TypeAdapter(list[Item]).validate_json(items)
         except (ValidationError, ValueError) as exc:
             raise HTTPException(422, 'Invalid approval selection.') from exc
-        approve_batch(library, auth, [item.model_dump(mode='json', exclude_none=True) for item in selected])
+        count = approve_batch(library, auth, [item.model_dump(mode='json', exclude_none=True) for item in selected])
+        if 'application/json' in request.headers.get('accept', ''):
+            return JSONResponse({'approved': count}, headers={'Cache-Control': 'no-store'})
         return RedirectResponse('/library', 303)
 
     @app.get('/library/suggestions/{suggestion_id}', include_in_schema=False)
     def suggestion_detail(request: Request, suggestion_id: UUID):
+        reviewer(request)
+        # Previously shared transfer links now open the workspace review queue.
+        return RedirectResponse('/library#approvals', 303)
+
+    @app.get('/library/suggestions/{suggestion_id}/files/{index}/download', include_in_schema=False)
+    def download_proposed_file(request: Request, suggestion_id: UUID, index: int):
         import hashlib
-        from .archive_review import entries
+        from pathlib import PurePosixPath
+        from fastapi.responses import Response
+        from .archive_review import entry
         auth = reviewer(request)
         with repo._connection(auth) as c:
-            suggestion = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed'", (suggestion_id, auth.principal.actor_id)).fetchone()
-        if not suggestion or suggestion['action'] != 'archive':
-            raise HTTPException(404, 'Archive proposal not found.')
-        files = []
-        for index, raw in enumerate(suggestion['payload']['files']):
-            if suggestion['payload'].get('transfer_inventory'):
-                files.append({'name': raw['name'], 'size': raw['size_bytes'], 'sha256': raw['sha256'],
-                              'preview': None, 'received': raw['received'],
-                              'state': suggestion['payload'].get('reviews', {}).get(str(index), 'pending')})
-                continue
-            item = ArchiveFile.model_validate(raw)
-            data = item.data()
-            files.append({'name': item.name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
-                          'preview': item.content[:12000] if item.encoding == 'utf8' else None})
-        return page(request, 'archive.html', title='Review chat archive', suggestion=suggestion, files=files,
-                    review_files=entries(suggestion['payload']),
-                    transfer_ready=all(f.get('received', True) or f.get('state', 'pending') != 'pending' for f in files))
+            row = c.execute("SELECT payload FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s "
+                            "AND action='archive' AND status='proposed'", (suggestion_id, auth.principal.actor_id)).fetchone()
+        if not row:
+            raise HTTPException(404, 'File proposal not found.')
+        item = entry(row['payload'], index)
+        if not item['ready'] or item['state'] != 'pending':
+            raise HTTPException(409, 'This original is not available for review.')
+        data = item['data']
+        if data is None:
+            with library.store.get(row['payload']['files'][index]['object_key']) as stream:
+                data = stream.read(settings.library_file_bytes + 1)
+        if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise HTTPException(409, 'This original failed verification.')
+        name = quote(PurePosixPath(item['name']).name, safe='')
+        return Response(data, media_type='application/octet-stream', headers={
+            'Content-Disposition': "attachment; filename*=UTF-8''" + name,
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
     @app.post('/library/suggestions/{suggestion_id}/files/{index}/review', include_in_schema=False)
     def review_archive_file(request: Request, suggestion_id: UUID, index: int,
@@ -200,7 +210,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             await file.close()
         if 'application/json' in request.headers.get('accept', ''):
             return JSONResponse(jsonable_encoder(result), headers={'Cache-Control': 'no-store'})
-        return RedirectResponse(f'/library/suggestions/{suggestion_id}', 303)
+        return RedirectResponse('/library#approvals', 303)
 
     @app.post("/library/folders", include_in_schema=False)
     def folder_create(

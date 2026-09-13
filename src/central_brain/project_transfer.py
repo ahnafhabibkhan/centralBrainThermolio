@@ -84,7 +84,7 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                             'upload_token': jwt.encode(claims, settings.session_secret, algorithm='HS256')})
     return {'id': sid, 'status': 'awaiting_transfer', 'mode': 'individual_raw_files',
             'uploads': uploads, 'file_limit_bytes': settings.library_file_bytes,
-            'completion_url': settings.public_url + '/library/suggestions/' + str(sid),
+            'completion_url': settings.public_url + '/library#approvals',
             'connector_fallback': 'For GitHub files, obtain fresh download_url values from the connected GitHub '
                                  'Contents API at the inventoried commit and call import_github_original for each file. '
                                  'Central Brain downloads and verifies the originals directly. '

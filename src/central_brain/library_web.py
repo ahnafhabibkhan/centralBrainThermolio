@@ -319,4 +319,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             with repo._connection(auth) as c:
                 library._lock(c, auth)
                 review_suggestion(library, auth, suggestion_id, False, c, [])
+        if 'application/json' in request.headers.get('accept', ''):
+            return JSONResponse({'status': 'approved' if action == 'approve' else 'rejected'},
+                                headers={'Cache-Control': 'no-store'})
         return RedirectResponse("/library", 303)

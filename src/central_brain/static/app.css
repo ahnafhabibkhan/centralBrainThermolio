@@ -42,6 +42,10 @@ button, .button { display: inline-flex; align-items: center; justify-content: ce
 .bulk-approval { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:16px 0; }
 .bulk-approval .hint { flex:1 1 240px; }
 .bulk-approval button:disabled { opacity:.5; cursor:default; }
+.archive-review-actions { display:flex; flex-wrap:wrap; gap:12px; }
+.archive-review-actions form { margin:0; }
+.archive-review button:disabled { opacity:.45; cursor:not-allowed; background:#e5e7eb; color:#4b5563; border-color:#d1d5db; }
+.archive-review [data-review-status]:empty { display:none; }
 label[for="confirm-delete"] { font-weight:400; }
 label[for="confirm-delete"] strong { font-weight:700; }
 .delete-inventory { padding-left:20px; line-height:1.8; overflow-wrap:anywhere; }

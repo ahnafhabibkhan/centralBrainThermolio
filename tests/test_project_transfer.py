@@ -152,3 +152,32 @@ def test_pending_upload_ui_and_manual_completion(pilot, library):
     assert not re.search(r'<button[^>]*disabled[^>]*>Approve archive', response.text)
     page = pilot.client.get('/library')
     assert 'Approve all (1)' in page.text
+
+
+def test_archive_review_http_reject_missing_and_approve_received(pilot, library):
+    data = b'original bytes' * 20000
+    receipt = prepare(pilot, library, {'review.txt': data})
+    path = '/library/suggestions/' + str(receipt['id'])
+    login = pilot.client.get('/login')
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', login.text).group(1)
+    pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
+    detail = pilot.client.get(path)
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text).group(1)
+    assert 'You can still reject this pending archive.' in detail.text
+    assert 'data-archive-review' in detail.text
+    headers = {'Accept': 'application/json'}
+    rejected_token = pilot.client.post(path, data={'action':'reject','csrf_token':'stale'}, headers=headers)
+    assert rejected_token.status_code == 403
+    assert 'detail' in rejected_token.json()
+    blocked = pilot.client.post(path, data={'action':'approve','csrf_token':csrf}, headers=headers)
+    assert blocked.status_code == 409
+    assert 'originals have not arrived' in blocked.json()['detail']
+    rejected = pilot.client.post(path, data={'action':'reject','csrf_token':csrf}, headers=headers)
+    assert rejected.json() == {'status':'rejected'}
+    assert library.usage(pilot.auth)['used'] == 0
+    receipt = prepare(pilot, library, {'review.txt':data}, summary_filename='ready.md')
+    assert send(pilot, receipt['uploads'][0], data).status_code == 200
+    approved = pilot.client.post('/library/suggestions/' + str(receipt['id']),
+        data={'action':'approve','csrf_token':csrf}, headers=headers)
+    assert approved.json() == {'status':'approved'}
+    assert any(n['name'] == 'review.txt' for n in library.snapshot(pilot.auth))

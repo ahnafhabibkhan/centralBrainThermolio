@@ -185,7 +185,7 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(HTTPException)
     async def errors(request, exc):
         headers = dict(exc.headers or {})
-        if request.url.path.startswith('/library') and exc.status_code >= 400:
+        if request.url.path.startswith('/library') and exc.status_code >= 400 and 'application/json' not in request.headers.get('accept', ''):
             from html import escape
             from fastapi.responses import HTMLResponse
             return HTMLResponse('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1">'

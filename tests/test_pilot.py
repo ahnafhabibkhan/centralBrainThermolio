@@ -271,6 +271,13 @@ def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
         assert response.headers['location'] == '/'
         assert client.get('/').status_code == 200
         assert client.get('/login', follow_redirects=False).headers['location'] == '/'
+        async def repeated_exchange(self, request, **kwargs):
+            raise RuntimeError('An authorization code cannot be exchanged twice.')
+        monkeypatch.setattr(StarletteOAuth2App, 'authorize_access_token', repeated_exchange)
+        assert client.get('/auth/login', follow_redirects=False).headers['location'] == '/'
+        assert client.get('/auth/callback?code=already-used&state=old', follow_redirects=False).headers['location'] == '/'
+        assert client.get('/').status_code == 200
+        monkeypatch.setattr(StarletteOAuth2App, 'authorize_access_token', exchange)
         client.cookies.clear()
         del claims['aud']
         rejected = client.get('/auth/callback')

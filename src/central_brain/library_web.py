@@ -1,7 +1,7 @@
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import Form, HTTPException, Query, Request
+from fastapi import File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -74,6 +74,9 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             ).fetchall()
         suggestions = [dict(item) for item in suggestions]
         for suggestion in suggestions:
+            suggestion['missing_originals'] = [f['name'] for f in suggestion['payload'].get('files', [])
+                if suggestion['payload'].get('transfer_inventory') and not f['received']]
+            suggestion['ready'] = not suggestion['missing_originals']
             if suggestion['action'] == 'archive':
                 suggestion['destination'] = suggestion['payload']['folder_path']
                 continue
@@ -85,7 +88,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         pending_files = [row for row in snapshot if row['status'] == 'proposed'][:100]
         with repo._connection(auth) as c:
             library._lock(c, auth)
-            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions]
+            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions if s['ready']]
             approval_items += [approval_item(library, auth, c, 'node', n['id']) for n in pending_files]
         return page(
             request,
@@ -146,7 +149,24 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             data = item.data()
             files.append({'name': item.name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
                           'preview': item.content[:12000] if item.encoding == 'utf8' else None})
-        return page(request, 'archive.html', title='Review chat archive', suggestion=suggestion, files=files)
+        return page(request, 'archive.html', title='Review chat archive', suggestion=suggestion, files=files,
+                    transfer_ready=all(f.get('received', True) for f in files))
+
+    @app.post('/library/suggestions/{suggestion_id}/original', include_in_schema=False)
+    async def complete_original(request: Request, suggestion_id: UUID, index: int = Form(...),
+                                file: UploadFile = File(...), csrf_token: str = Form(...)):
+        from .project_transfer import store_original
+        from starlette.concurrency import run_in_threadpool
+        auth = await run_in_threadpool(reviewer, request)
+        check_csrf(request, csrf_token)
+        try:
+            data = await file.read(settings.library_file_bytes + 1)
+            if len(data) > settings.library_file_bytes:
+                raise HTTPException(413, 'The file exceeds the 50 MB limit.')
+            await run_in_threadpool(store_original, library, auth, suggestion_id, index, data)
+        finally:
+            await file.close()
+        return RedirectResponse(f'/library/suggestions/{suggestion_id}', 303)
 
     @app.post("/library/folders", include_in_schema=False)
     def folder_create(

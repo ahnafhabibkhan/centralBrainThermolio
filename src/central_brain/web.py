@@ -135,6 +135,13 @@ def install_web(app, settings, repo):
     async def oauth_login(request: Request):
         if not settings.oauth_issuer:
             return RedirectResponse("/login", 303)
+        if request.session.get('sid'):
+            try:
+                await run_in_threadpool(reviewer, request)
+            except HTTPException:
+                pass
+            else:
+                return RedirectResponse('/', 303)
         return await oauth.cognito.authorize_redirect(
             request, settings.public_url + "/auth/callback", resource=settings.oauth_resource,
         )
@@ -143,6 +150,14 @@ def install_web(app, settings, repo):
     async def oauth_callback(request: Request):
         if not settings.oauth_issuer:
             raise HTTPException(404, "not found")
+        # A repeated callback must not exchange a used code or clear a valid workspace session.
+        if request.session.get('sid'):
+            try:
+                await run_in_threadpool(reviewer, request)
+            except HTTPException:
+                pass
+            else:
+                return RedirectResponse('/', 303)
         stage = "token exchange"
         try:
             token = await oauth.cognito.authorize_access_token(request, resource=settings.oauth_resource)

@@ -37,7 +37,9 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        if scope['path'] in {'/library/upload', '/archive-original'}:
+        if scope['path'] in {'/library/upload', '/archive-original'} or (
+            scope['path'].startswith('/library/suggestions/') and scope['path'].endswith('/original')
+        ):
             # Bound the multipart body on disk before parsing, including requests without Content-Length.
             import tempfile
             with tempfile.TemporaryFile() as spool:

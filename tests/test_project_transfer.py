@@ -1,5 +1,6 @@
 import hashlib
 import time
+import re
 from uuid import UUID
 
 import pytest
@@ -126,3 +127,28 @@ def test_maximum_original_over_http_and_storage_failure_retry(pilot, library, mo
     with library.repo._connection(pilot.auth) as c:
         review_suggestion(library, pilot.auth, UUID(str(prepared['id'])), False, c, [])
     assert purge_one(library, pilot.auth)
+
+
+def test_pending_upload_ui_and_manual_completion(pilot, library):
+    data = b'exact original\n' * 20000
+    receipt = prepare(pilot, library, {'nested/missing.txt': data})
+    sid = str(receipt['id'])
+    page = pilot.client.get('/login')
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
+    page = pilot.client.get('/library')
+    assert 'Waiting for upload: nested/missing.txt' in page.text
+    assert re.search(r'<button[^>]*disabled[^>]*>Approve all', page.text)
+    detail = pilot.client.get('/library/suggestions/' + sid)
+    assert 'Upload missing original' in detail.text
+    assert re.search(r'<button[^>]*disabled[^>]*>Approve archive', detail.text)
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text).group(1)
+    url = '/library/suggestions/' + sid + '/original'
+    assert pilot.client.post(url, data={'index': 0, 'csrf_token': 'wrong'}, files={'file': ('missing.txt', data)}).status_code == 403
+    assert pilot.client.post(url, data={'index': 0, 'csrf_token': csrf}, files={'file': ('missing.txt', b'wrong')}).status_code == 422
+    response = pilot.client.post(url, data={'index': 0, 'csrf_token': csrf}, files={'file': ('missing.txt', data)})
+    assert response.status_code == 200
+    assert 'Upload missing original' not in response.text
+    assert not re.search(r'<button[^>]*disabled[^>]*>Approve archive', response.text)
+    page = pilot.client.get('/library')
+    assert 'Approve all (1)' in page.text

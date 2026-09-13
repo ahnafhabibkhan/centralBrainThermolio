@@ -1,10 +1,10 @@
 {$PUBLIC_URL} {
     header Strict-Transport-Security "max-age=31536000"
-    @upload path /library/upload /archive-original
+    @upload path /library/upload /archive-original /library/suggestions/*/original
     request_body @upload {
         max_size 51MB
     }
-    @small not path /library/upload /archive-original
+    @small not path /library/upload /archive-original /library/suggestions/*/original
     request_body @small {
         max_size 256KB
     }

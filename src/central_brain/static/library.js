@@ -27,7 +27,7 @@
     }
     const doc = parser.parseFromString(body, 'text/html');
     if (!response.ok) {
-      let detail = doc.querySelector('main')?.textContent?.trim();
+      let detail = doc.querySelector('main p')?.textContent?.trim() || doc.querySelector('main')?.textContent?.trim();
       if (!detail) { try { detail = JSON.parse(body).detail; } catch (_) {} }
       const error = new Error(typeof detail === 'string' ? detail.slice(0, 600) : 'The request failed. Please try again.');
       error.status = response.status;
@@ -186,6 +186,7 @@
     }
     busy = true;
     const buttons = [...form.querySelectorAll('button')];
+    const disabledBefore = buttons.map(button => button.disabled);
     buttons.forEach(button => { button.disabled = true; });
     message('Saving your changes.');
     try {
@@ -208,7 +209,7 @@
       message(error.message, true);
     } finally {
       busy = false;
-      buttons.forEach(button => { button.disabled = false; });
+      buttons.forEach((button, index) => { button.disabled = disabledBefore[index]; });
     }
   });
   // Other assistants can update this workspace while the page stays open.
@@ -216,7 +217,7 @@
     if (busy || document.hidden) return;
     let ownsBusy = false;
     try {
-      const response = await fetch('/library/context', {credentials: 'same-origin', cache: 'no-store'});
+      const response = await fetch('/library/context', {credentials: 'same-origin', cache: 'no-store', redirect: 'manual'});
       if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return;
       const context = await response.json();
       if (busy) return;

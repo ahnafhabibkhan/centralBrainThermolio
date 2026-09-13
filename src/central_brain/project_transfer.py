@@ -111,6 +111,12 @@ def transfer_identity(settings, token):
 
 def receive_original(library, settings, token, data):
     auth, claims = transfer_identity(settings, token)
+    return store_original(library, auth, UUID(claims['sid']), claims['index'], data)
+
+
+def store_original(library, auth, sid, index, data):
+    auth.require('writer')
+    claims = {'sid': str(sid), 'index': index}
     with library.repo._connection(auth) as c:
         library._lock(c, auth)
         row = c.execute("SELECT payload FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s "
@@ -118,6 +124,8 @@ def receive_original(library, settings, token, data):
         if not row:
             raise HTTPException(409, 'The archive is no longer awaiting files or approval.')
         p = row['payload']
+        if not p.get('transfer_inventory') or not 0 <= index < len(p['files']):
+            raise HTTPException(404, 'Original not found in this transfer.')
         item = p['files'][claims['index']]
         if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise HTTPException(422, 'The original does not match its declared size and SHA-256 checksum.')

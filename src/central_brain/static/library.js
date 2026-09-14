@@ -289,8 +289,8 @@
       return;
     }
     const file = data.get('file');
-    if (file instanceof File && file.size > 50 * 1024 * 1024) {
-      message('The file exceeds the 50 MB limit.', true);
+    if (file instanceof File && file.size > 100 * 1024 * 1024) {
+      message('The file exceeds the 100 MB limit.', true);
       return;
     }
     busy = true;

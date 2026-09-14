@@ -18,7 +18,7 @@ from pathlib import Path
 class OriginalManifest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=240)
-    size_bytes: int = Field(gt=0, le=50 * 1024 * 1024)
+    size_bytes: int = Field(gt=0, le=100 * 1024 * 1024)
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 

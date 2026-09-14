@@ -204,7 +204,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         try:
             data = await file.read(settings.library_file_bytes + 1)
             if len(data) > settings.library_file_bytes:
-                raise HTTPException(413, 'The file exceeds the 50 MB limit.')
+                raise HTTPException(413, 'The file exceeds the 100 MB limit.')
             result = await run_in_threadpool(store_original, library, auth, suggestion_id, index, data)
         finally:
             await file.close()

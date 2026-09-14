@@ -32,7 +32,7 @@ services:
     <<: *app
     restart: unless-stopped
     mem_limit: 550m
-    tmpfs: ['/tmp:size=192m,mode=1777']
+    tmpfs: ['/tmp:size=256m,mode=1777']
     volumes: ['/opt/central-brain/library-credentials:/run/library-credentials:ro']
     depends_on:
       postgres: {condition: service_healthy}
@@ -64,7 +64,7 @@ services:
     <<: *runtimeapp
     command: [python, -m, central_brain.library_worker]
     mem_limit: 600m
-    tmpfs: ['/tmp:size=80m,mode=1777']
+    tmpfs: ['/tmp:size=128m,mode=1777']
     healthcheck:
       disable: true
   caddy:

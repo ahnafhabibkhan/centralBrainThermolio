@@ -12,7 +12,7 @@ document.addEventListener('submit', async event => {
   let completed = 0;
   try {
     for (const file of form.elements.files.files) {
-      if (file.size > 50 * 1024 * 1024) throw new Error(`${file.name} exceeds 50 MB.`);
+      if (file.size > 100 * 1024 * 1024) throw new Error(`${file.name} exceeds 100 MB.`);
       progress.textContent = `Checking ${file.name}.`;
       const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
       const sha = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');

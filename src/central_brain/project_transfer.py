@@ -40,7 +40,7 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
         if Path(f.name).suffix.lower() not in EXTENSIONS or f.name.lower() in names:
             raise HTTPException(422, 'Use supported, distinct file paths, without reserved summary names.')
         if f.size_bytes > settings.library_file_bytes:
-            raise HTTPException(413, 'Each original can be up to 50 MB.')
+            raise HTTPException(413, 'Each original can be up to 100 MB.')
         names.add(f.name.lower())
     for name in names:
         if any('/'.join(name.split('/')[:i]) in names for i in range(1, len(name.split('/')))):

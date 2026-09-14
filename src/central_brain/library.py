@@ -548,11 +548,11 @@ class Library:
         from .project_transfer import reserved_bytes
         name = filename(name)
         if Path(name).suffix.lower() not in EXTENSIONS:
-            raise HTTPException(422, "Supported formats: PDF, DOCX, XLSX, CSV, MD, TXT, SVG, PNG, JPG, WEBP.")
+            raise HTTPException(422, "Supported formats: PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, SVG, PNG, JPG, WEBP.")
         if visibility not in {"private", "workspace"}:
             raise HTTPException(422, "Invalid visibility.")
         if not data or len(data) > self.settings.library_file_bytes:
-            raise HTTPException(413, "File must be between 1 byte and 50 MB.")
+            raise HTTPException(413, "File must be between 1 byte and 100 MB.")
         version_id = uuid4()
         key = f"files/{auth.principal.workspace_id}/{version_id}"
         with nullcontext(connection) if connection else self._upload_transaction(auth, key) as c:

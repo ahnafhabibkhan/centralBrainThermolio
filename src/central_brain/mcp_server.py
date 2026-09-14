@@ -78,7 +78,10 @@ def build_mcp(settings, repo):
             "the host can programmatically forward exact file bytes to tool arguments. Otherwise show completion_url. "
             "Call get_chat_archive_upload_status before saying an upload is complete or asking for approval. "
             "A blocked transfer is pending work; report its missing files instead of saying there is nothing new to save. "
-            "Transfer files sequentially with code, up to 50 MB each and 100 files per batch, preserving relative paths. "
+            "Transfer files sequentially with code, up to 100 MB each and 100 files per batch, preserving relative paths. "
+            "PDF, XLSX and PPTX originals are supported. The text-only propose_file tool is not the binary upload tool. "
+            "Use prepare_chat_archive_upload and its original transfer tools for these files; preserve their exact bytes. "
+            "Never recommend text extracts as replacements merely because propose_file accepts only text. "
             "Repeat batches for larger projects. Do not transcribe large base64 strings through model output. "
             "Only inline propose_chat_archive calls have a 240 KB limit; use prepare_chat_archive_upload for larger files. "
             "Use a distinct summary_filename when adding another batch to an existing folder. For inaccessible originals, "
@@ -215,7 +218,7 @@ def build_mcp(settings, repo):
     def prepare_chat_archive_upload(folder_path: str, summary: str, source_reference: str,
                                     files: list[OriginalManifest], destination_confirmed: bool = False,
                                     summary_filename: str = 'summary.md') -> dict:
-        """Prepare checksum-bound uploads for originals up to 50 MB each, with 100 files per batch.
+        """Prepare checksum-bound uploads for originals up to 100 MB each, with 100 files per batch.
 
         Use this when originals are in your code tool's filesystem. Inventory names, byte sizes, and
         full SHA-256 hashes with code first. Find existing folders and confirm any related destination.
@@ -252,7 +255,7 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
     def prepare_original_upload(archive_id: str, file_index: int) -> dict:
-        """Get a private S3 multipart upload for one inventoried original, up to 50 MB.
+        """Get a private S3 multipart upload for one inventoried original, up to 100 MB.
 
         Prefer this for large files when the code environment cannot reach Central Brain's upload host.
         Send the original directly from code to S3 using the returned fields. No binary tool arguments
@@ -319,9 +322,15 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
     def propose_file(name: str, content: str, source_reference: str, folder_id: str | None = None) -> dict:
-        """Propose a Markdown or plain-text file for human approval. Do not include credentials or unnecessary sensitive information."""
+        """Propose a new Markdown or plain-text note for human approval.
+
+        For original PDF, XLSX, PPTX or other binary files, use prepare_chat_archive_upload,
+        then the returned upload path or import_github_original. Binary originals are supported
+        up to 100 MB each. Do not substitute text extracts for them.
+        Do not include credentials or unnecessary sensitive information.
+        """
         if not name.lower().endswith(('.md','.txt')) or len(content)>20000 or not 1<=len(source_reference)<=1000:
-            return {'error':'Use a .md or .txt filename, up to 20,000 characters, and a source reference.'}
+            return {'error':'This tool creates text notes only. For PDF, XLSX, PPTX and other original files, use prepare_chat_archive_upload and its transfer tools. Originals up to 100 MB are supported.'}
         node=library.upload(current_auth.get(),name,(content+'\n\nSource: '+source_reference).encode(),
                             UUID(folder_id) if folder_id else None,proposed=True)
         return {'file_id':node,'status':'proposed'}

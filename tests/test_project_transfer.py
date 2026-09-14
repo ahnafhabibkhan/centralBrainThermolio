@@ -106,13 +106,13 @@ def test_project_path_and_size_limits(pilot, library):
     with pytest.raises(HTTPException):
         prepare(pilot, library, {'a.txt': b'x', 'a.txt/child.txt': b'x'})
     with pytest.raises(ValidationError):
-        OriginalManifest(name='large.pdf', size_bytes=52428801, sha256='a' * 64)
-    assert OriginalManifest(name='large.pdf', size_bytes=52428800, sha256='a' * 64)
+        OriginalManifest(name='large.pdf', size_bytes=104857601, sha256='a' * 64)
+    assert OriginalManifest(name='large.pdf', size_bytes=104857600, sha256='a' * 64)
 
 
 def test_maximum_original_over_http_and_storage_failure_retry(pilot, library, monkeypatch):
     from central_brain.library import ObjectStore
-    data = b'x' * (50 * 1024 * 1024)
+    data = b'x' * (100 * 1024 * 1024)
     prepared = prepare(pilot, library, {'maximum.txt': data})
     upload = prepared['uploads'][0]
     assert pilot.client.post('/archive-original', content=b'x').status_code == 401
@@ -127,6 +127,32 @@ def test_maximum_original_over_http_and_storage_failure_retry(pilot, library, mo
     with library.repo._connection(pilot.auth) as c:
         review_suggestion(library, pilot.auth, UUID(str(prepared['id'])), False, c, [])
     assert purge_one(library, pilot.auth)
+
+
+def test_pdf_and_excel_originals_transfer_without_text_conversion(pilot, library):
+    import io
+    from pypdf import PdfWriter
+    from openpyxl import Workbook
+    pdf = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.write(pdf)
+    xlsx = io.BytesIO()
+    workbook = Workbook()
+    workbook.active.append(['Contact', 'Status'])
+    workbook.active.append(['Example', 'Follow up'])
+    workbook.save(xlsx)
+    originals = {'Sales/Investor deck.pdf': pdf.getvalue(), 'Sales/Re-engagement roster.xlsx': xlsx.getvalue()}
+    receipt = prepare(pilot, library, originals)
+    for upload in receipt['uploads']:
+        assert send(pilot, upload, originals[upload['name']]).status_code == 200
+    approve_batch(library, pilot.auth, selection(library, pilot.auth, [('suggestion', receipt['id'])]))
+    for name, data in originals.items():
+        node = next(n for n in library.snapshot(pilot.auth) if n['path'].endswith('/' + name))
+        actual_name, stream = library.download(pilot.auth, node['id'])
+        with stream:
+            assert stream.read() == data
+        assert actual_name == name.split('/')[-1]
 
 
 def test_pending_upload_ui_and_manual_completion(pilot, library):

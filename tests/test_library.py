@@ -167,7 +167,7 @@ def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
     assert 'Folder hierarchy' in page and 'account-actions' in page
     assert 'folder-sidebar' not in page and '>All files</a>' not in page
-    assert 'No approvals are waiting.' in page
+    assert 'No items are waiting in this view.' in page
     assert 'data-tree-id=' in page and 'Memories' in page and 'Skills' in page
     assert client.get('/skills', follow_redirects=False).headers['location'] == f"/library?folder={roots['Skills']}"
     data = {'csrf_token': csrf, 'memory_type': 'fact', 'source_reference': 'Test file'}

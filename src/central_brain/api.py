@@ -50,8 +50,8 @@ class BodyLimit:
                         return
                     body = message.get('body', b'')
                     size += len(body)
-                    if size > 51 * 1024 * 1024:
-                        return await JSONResponse({'detail':'Upload exceeds 50 MB plus form overhead.'},413)(scope,receive,send)
+                    if size > 101 * 1024 * 1024:
+                        return await JSONResponse({'detail':'Upload exceeds 100 MB plus form overhead.'},413)(scope,receive,send)
                     spool.write(body)
                     if not message.get('more_body',False):
                         break

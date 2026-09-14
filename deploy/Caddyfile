@@ -2,7 +2,7 @@
     header Strict-Transport-Security "max-age=31536000"
     @upload path /library/upload /archive-original /library/suggestions/*/original
     request_body @upload {
-        max_size 51MB
+        max_size 105906176
     }
     @small not path /library/upload /archive-original /library/suggestions/*/original
     request_body @small {

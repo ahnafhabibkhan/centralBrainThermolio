@@ -31,7 +31,7 @@ The source file lists the exact transferred filenames, sizes, and SHA-256 checks
 
 ## Limits
 
-The connector supports originals up to 50 MB each, with up to 100 files per upload batch. Relative paths preserve nested project folders. Use further batches with distinct summary filenames for larger projects. Originals remain in private object storage; the database keeps their inventory rather than large encoded file contents. Pending transfers reserve space within the shared 100 GB allowance across all team members.
+The connector supports originals up to 100 MB each, with up to 100 files per upload batch. Relative paths preserve nested project folders. Use further batches with distinct summary filenames for larger projects. Originals remain in private object storage; the database keeps their inventory rather than large encoded file contents. Pending transfers reserve space within the shared 100 GB allowance across all team members.
 
 The code environment must be able to read the originals and reach Central Brain over HTTPS. Individual upload tokens expire after one hour and cannot approve anything. Repeating the same preparation resumes missing files for up to 24 hours. Upload sequentially, inspect every response, and honor Retry-After if the server responds with HTTP 429. Incomplete transfers expire after 24 hours, and their staged originals are queued for removal. Complete transfers remain pending human approval. Approval preserves the original checksums, creates the folder structure, and queues temporary copies for cleanup.
 

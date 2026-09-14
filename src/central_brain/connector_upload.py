@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import time
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
@@ -24,6 +25,8 @@ def status(library, auth, archive_id):
         pending = [f for f in files if f['review_state'] == 'pending']
         ready = bool(pending) and all(f['received'] for f in pending)
         return {'archive_id': str(archive_id), 'status': row['status'], 'ready_for_approval': ready,
+                'checked_at': datetime.now(timezone.utc).isoformat(),
+                'guidance': 'This is the current receipt state. Proposed means awaiting review, not missing bytes. Recheck before retrying. This inventory covers this transfer only, not the whole source project.',
                 'ready_file_count': sum(f['received'] for f in pending),
                 'missing_file_count': sum(not f['received'] for f in pending),
                 'upload_access_expired': time.time() >= p.get('transfer_expires', float('inf')),

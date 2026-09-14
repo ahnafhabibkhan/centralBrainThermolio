@@ -66,6 +66,9 @@ def build_mcp(settings, repo):
             "If the host cannot list the whole project, explicitly state that coverage is unverified; do not infer completeness. "
             "Report discovered, received, missing, and inaccessible file counts and paths across all batches. "
             "Do not stop after a sample file, and do not call a project uploaded until every inventoried original is received. "
+            "Before reporting an existing transfer as missing or retrying it, call get_chat_archive_upload_status again. "
+            "A proposed transfer can already contain received files awaiting review. Never infer missing bytes from proposed status. "
+            "A name conflict does not prove identical content or that an entire batch exists. Check each file individually. "
             "Before creating a new upload batch, call plan_original_upload with the actual source access and host permission. "
             "Do not create empty transfer after empty transfer when a host cannot deliver originals. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
@@ -352,9 +355,9 @@ def build_mcp(settings, repo):
         """
         if not name.lower().endswith(('.md','.txt')) or len(content)>20000 or not 1<=len(source_reference)<=1000:
             return {'error':'This tool creates text notes only. For PDF, XLSX, PPTX and other original files, use prepare_chat_archive_upload and its transfer tools. Originals up to 100 MB are supported.'}
-        node=library.upload(current_auth.get(),name,(content+'\n\nSource: '+source_reference).encode(),
-                            UUID(folder_id) if folder_id else None,proposed=True)
-        return {'file_id':node,'status':'proposed'}
+        from .note_proposals import propose_note
+        return propose_note(library, current_auth.get(), name, content, source_reference,
+                            UUID(folder_id) if folder_id else None)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
     def suggest_organization(action: str, name: str, folder_id: str | None = None, file_id: str | None = None) -> dict:

@@ -102,7 +102,8 @@ def test_rejected_files_cannot_be_completed_or_reissued(pilot, library):
     assert error.value.status_code == 409
     assert status(library, pilot.auth, sid)['ready_file_count'] == 0
     assert status(library, pilot.auth, sid)['files'][0]['review_state'] == 'rejected'
-    assert [f['name'] for f in prepare(pilot, library, originals)['uploads']] == ['two.txt']
+    resumed = prepare(pilot, library, originals)['uploads']
+    assert [(f['name'], f['file_index']) for f in resumed] == [('two.txt', 1)]
 
 
 @pytest.mark.parametrize('offset,content,expected', [

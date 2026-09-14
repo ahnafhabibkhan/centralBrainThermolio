@@ -8,6 +8,7 @@ This review was completed on September 14, 2026. It covers the website, MCP conn
 - Received originals and partial chunks survive transfer expiry. Repeating the identical preparation with current authorization renews access to the pending transfer and preserves its progress. Empty abandoned transfers can still expire and release reserved storage.
 - Retrying a received original verifies its stored size and SHA-256. A missing, truncated, oversized, or changed stored copy can be repaired using the exact original. A storage outage is not mistaken for a missing file.
 - Transfer status distinguishes pending, approved, and rejected files and reports counts of ready and missing originals. Switching from chunks to a whole-file transfer reports the correct completed offset.
+- Resumed targets include their original file index. Reviewing a file does not shift the indices used by S3 or chunk uploads for the remaining files.
 - Rejected files cannot receive a new upload target or be acknowledged as successfully completed through the S3 completion action.
 - Browser upload and approval errors explain interrupted connections, unconfirmed server responses, rate limits, and expired sessions. After an ambiguous result, the user is told to refresh the queue before retrying. Confirmed approvals remain preserved.
 
@@ -42,6 +43,8 @@ The automated browser run passed the following checks:
 - The approval panel remains visible when empty, mobile dialogs fit the viewport, and the browser reports no JavaScript errors.
 
 Desktop and mobile screenshots were inspected in both themes.
+
+Live deployment checks also passed an exact 17,940,000-byte direct S3 upload, rejection of an incorrect S3 upload, duplicate completion, renewal after expiry, and a 168,000-byte upload through the public HTTPS endpoint. The downloaded originals matched their expected hashes. Public theme assets matched the deployed source. Only the temporary test transfer was rejected and purged afterward; business files were not approved or modified.
 
 ## Reproducing the checks
 

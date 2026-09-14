@@ -83,7 +83,7 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
             claims = {'iss': 'central-brain:project-transfer', 'aud': settings.public_url,
                       'iat': now, 'exp': min(now + 3600, p['transfer_expires']), 'sid': str(sid), 'index': i,
                       'actor': str(auth.principal.actor_id), 'workspace': str(auth.principal.workspace_id)}
-            uploads.append({'name': item['name'], 'received': item['received'],
+            uploads.append({'file_index': i, 'name': item['name'], 'received': item['received'],
                             'upload_url': settings.public_url + '/archive-original',
                             'upload_token': jwt.encode(claims, settings.session_secret, algorithm='HS256')})
     return {'id': sid, 'status': 'awaiting_transfer', 'mode': 'individual_raw_files',
@@ -107,6 +107,7 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                            'On HTTP 429, wait for Retry-After before retrying. '
                            'Tokens last one hour. Repeat the identical preparation to renew access and resume '
                            'an existing pending transfer. Received originals and partial chunks are preserved. '
+                           'Use each returned file_index for S3 or chunk tools; do not renumber remaining files after review. '
                            'Each received original can be approved independently. Missing files remain pending. Preserve relative paths. '
                            'For more than 100 files, use further batches with distinct summary filenames. '
                            'Never expose tokens or claim files were saved if an upload failed.'}

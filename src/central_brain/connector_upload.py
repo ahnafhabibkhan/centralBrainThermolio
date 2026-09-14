@@ -2,7 +2,6 @@
 import base64
 import hashlib
 import time
-from uuid import UUID
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
@@ -19,12 +18,17 @@ def status(library, auth, archive_id):
             raise HTTPException(404, 'Transfer not found.')
         p = row['payload']
         files = [{'index': i, 'name': f['name'], 'size_bytes': f['size_bytes'],
-                  'received': f['received'], 'next_offset': min(len(f.get('chunks', [])) * CHUNK_BYTES, f['size_bytes'])}
+                  'received': f['received'], 'review_state': p.get('reviews', {}).get(str(i), 'pending'),
+                  'next_offset': f['size_bytes'] if f['received'] else min(len(f.get('chunks', [])) * CHUNK_BYTES, f['size_bytes'])}
                  for i, f in enumerate(p.get('files', [])) if 'received' in f]
-        ready = bool(files) and all(f['received'] for f in files)
+        pending = [f for f in files if f['review_state'] == 'pending']
+        ready = bool(pending) and all(f['received'] for f in pending)
         return {'archive_id': str(archive_id), 'status': row['status'], 'ready_for_approval': ready,
+                'ready_file_count': sum(f['received'] for f in pending),
+                'missing_file_count': sum(not f['received'] for f in pending),
+                'upload_access_expired': time.time() >= p.get('transfer_expires', float('inf')),
                 'files': files, 'chunk_bytes': CHUNK_BYTES,
-                'completion_url': library.settings.public_url + '/library/suggestions/' + str(archive_id)}
+                'completion_url': library.settings.public_url + '/library#approvals'}
 
 
 def upload_chunk(library, auth, archive_id, index, offset, content):

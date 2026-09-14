@@ -73,9 +73,13 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
             return {'id': sid, 'status': row['status'], 'duplicate': True}
         now = int(time.time())
         if now >= p['transfer_expires']:
-            raise HTTPException(409, 'This incomplete transfer expired. Use a new summary filename to start again.')
+            # An authenticated retry renews this pending inventory without losing progress.
+            p['transfer_expires'] = now + 86400
+            c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), sid))
         uploads = []
         for i, item in enumerate(p['files']):
+            if p.get('reviews', {}).get(str(i), 'pending') != 'pending':
+                continue
             claims = {'iss': 'central-brain:project-transfer', 'aud': settings.public_url,
                       'iat': now, 'exp': min(now + 3600, p['transfer_expires']), 'sid': str(sid), 'index': i,
                       'actor': str(auth.principal.actor_id), 'workspace': str(auth.principal.workspace_id)}
@@ -101,7 +105,8 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                            'to its upload_url, Content-Type: application/octet-stream and Authorization: Bearer '
                            '<upload_token>. Send the exact raw bytes, without base64 or JSON. Check every response. '
                            'On HTTP 429, wait for Retry-After before retrying. '
-                           'Tokens last one hour; repeat the same preparation to resume for up to 24 hours. '
+                           'Tokens last one hour. Repeat the identical preparation to renew access and resume '
+                           'an existing pending transfer. Received originals and partial chunks are preserved. '
                            'Each received original can be approved independently. Missing files remain pending. Preserve relative paths. '
                            'For more than 100 files, use further batches with distinct summary filenames. '
                            'Never expose tokens or claim files were saved if an upload failed.'}
@@ -127,6 +132,30 @@ def receive_original(library, settings, token, data):
     return store_original(library, auth, UUID(claims['sid']), claims['index'], data)
 
 
+def original_intact(library, item):
+    """Check a received original before acknowledging a retry as already complete."""
+    from botocore.exceptions import ClientError
+    digest = hashlib.sha256()
+    remaining = item['size_bytes'] + 1
+    total = 0
+    try:
+        with library.store.get(item['object_key']) as stream:
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                remaining -= len(chunk)
+                total += len(chunk)
+    except FileNotFoundError:
+        return False
+    except ClientError as exc:
+        if exc.response['Error']['Code'] in {'NoSuchKey', '404'}:
+            return False
+        raise
+    return total == item['size_bytes'] and digest.hexdigest() == item['sha256']
+
+
 def store_original(library, auth, sid, index, data):
     auth.require('writer')
     claims = {'sid': str(sid), 'index': index}
@@ -144,7 +173,7 @@ def store_original(library, auth, sid, index, data):
             raise HTTPException(409, 'This original was rejected. Prepare a new proposal to upload it.')
         if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise HTTPException(422, 'The original does not match its declared size and SHA-256 checksum.')
-        duplicate = item['received']
+        duplicate = item['received'] and original_intact(library, item)
         if not duplicate:
             library.store.put(item['object_key'], data)
             item['received'] = True
@@ -175,7 +204,9 @@ def expire_incomplete(library, auth):
                          (auth.principal.actor_id, int(time.time()))).fetchall()
         for row in rows:
             p = row['payload']
-            if all(f['received'] for f in p['files']):
+            # Expiration limits credentials, not the user's received files or transfer progress.
+            # Empty abandoned inventories can still release their reserved storage.
+            if any(f['received'] or f.get('chunks') for f in p['files']):
                 continue
             queue_cleanup(c, auth, row['id'], p)
             c.execute("UPDATE central_brain.library_suggestions SET status='reject',payload=%s WHERE id=%s",

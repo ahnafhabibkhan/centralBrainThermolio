@@ -3,16 +3,19 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{{ title }} · Thermolio Central Brain</title>
-  <link rel="stylesheet" href="/static/app.css?v=workspace-queue-20260913">
+  <script src="/static/theme.js?v=20260914"></script>
+  <link rel="stylesheet" href="/static/app.css?v=upload-reliability-theme-20260914">
   <script src="/static/archive-review.js?v=individual-review-20260913" defer></script>
   <script src="/static/archive-upload.js?v=uploads-100mb-20260913" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar"><a class="brand" href="/" aria-label="Thermolio Central Brain home"><img class="brand-logo" src="/static/thermolio-logo.svg" alt="Thermolio" width="156" height="36"><span class="brand-product">Central Brain</span></a>
-  {% if request.session.get('sid') %}<div class="account-actions"><a href="/getting-started">Getting started</a>
+  <div class="account-actions">{% if request.session.get('sid') %}<a href="/getting-started">Getting started</a>
     <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="quiet">Sign out</button></form>
-  </div>{% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}</header>
+  {% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}
+  <button type="button" class="theme-toggle" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode" hidden><svg class="theme-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 13.3A8.6 8.6 0 0 1 10.7 3.5a8.6 8.6 0 1 0 9.8 9.8Z"/></svg><svg class="theme-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg><span>Dark mode</span><span class="theme-switch" aria-hidden="true"></span></button>
+  </div></header>
   <main id="main">{% block content %}{% endblock %}</main>
   <footer><span>Thermolio · Internal use only</span><a href="/getting-started">Getting started</a><span class="environment">{% if local %}Local preview{% else %}Restricted access{% endif %}</span></footer>
 </body></html>

@@ -4,6 +4,7 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
+from .project_transfer import original_intact
 
 
 def download_original(url, size):
@@ -57,7 +58,7 @@ def import_original(library, auth, archive_id, file_index, download_url):
         if payload.get('reviews', {}).get(str(file_index)) == 'rejected':
             raise HTTPException(409, 'This original was rejected.')
         item = payload['files'][file_index]
-        if item['received']:
+        if item['received'] and original_intact(library, item):
             return {'received': item['name'], 'duplicate': True}
         if time.time() >= payload['transfer_expires']:
             raise HTTPException(409, 'This transfer expired. Prepare the archive again.')

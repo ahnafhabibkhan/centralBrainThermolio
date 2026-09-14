@@ -4,6 +4,7 @@ import time
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
+from .project_transfer import original_intact
 
 
 def prepare(library, auth, archive_id, file_index):
@@ -22,11 +23,11 @@ def prepare(library, auth, archive_id, file_index):
         f = p['files'][file_index]
         if p.get('reviews', {}).get(str(file_index)) == 'rejected':
             raise HTTPException(409, 'This original was rejected.')
-        if f['received']:
+        if f['received'] and original_intact(library, f):
             return {'received': True, 'name': f['name']}
         expiry = min(600, p['transfer_expires'] - int(time.time()))
         if expiry <= 0:
-            raise HTTPException(409, 'This transfer expired. Prepare a new archive.')
+            raise HTTPException(409, 'Upload access expired. Repeat the identical preparation to renew this pending transfer.')
         key = 'files/transfers/' + f['object_key'].rsplit('/', 1)[-1]
         checksum = base64.b64encode(bytes.fromhex(f['sha256'])).decode()
         fields = {'x-amz-server-side-encryption': 'AES256', 'x-amz-checksum-algorithm': 'SHA256',
@@ -58,7 +59,9 @@ def complete(library, auth, archive_id, file_index):
         if not 0 <= file_index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][file_index]
-        if f['received']:
+        if p.get('reviews', {}).get(str(file_index)) == 'rejected':
+            raise HTTPException(409, 'This original was rejected.')
+        if f['received'] and original_intact(library, f):
             return {'received': True, 'duplicate': True, 'name': f['name']}
         if int(time.time()) >= p['transfer_expires']:
             raise HTTPException(409, 'The incomplete transfer expired.')

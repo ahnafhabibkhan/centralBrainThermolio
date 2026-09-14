@@ -30,12 +30,25 @@
     panel.querySelector('.bulk-approval').hidden = queueFilter === 'upload';
   }
   async function postJSON(url, data) {
-    const response = await fetch(url, {method: 'POST', body: data, credentials: 'same-origin',
-      redirect: 'manual', headers: {Accept: 'application/json'}});
+    let response;
+    try {
+      response = await fetch(url, {method: 'POST', body: data, credentials: 'same-origin',
+        redirect: 'manual', headers: {Accept: 'application/json'}});
+    } catch (_) {
+      throw new Error('The connection was interrupted. Your request may have completed. Refresh the queue to check before retrying.');
+    }
     if (response.type === 'opaqueredirect' || response.status === 401) {
       throw new Error('Your session has ended. Sign in and reopen the workspace to continue.');
     }
-    const result = await response.json();
+    if (response.status === 429) {
+      const delay = Number(response.headers.get('Retry-After'));
+      throw new Error(`Too many requests. ${Number.isFinite(delay) && delay > 0 ? `Wait ${delay} seconds, then` : 'Please'} refresh the queue before retrying.`);
+    }
+    let result;
+    try { result = await response.json(); }
+    catch (_) {
+      throw new Error('The server did not confirm the result. Refresh the queue to check completed uploads and approvals before retrying.');
+    }
     if (!response.ok) {
       const error = new Error(typeof result.detail === 'string' ? result.detail : 'The request could not be completed.');
       error.status = response.status;

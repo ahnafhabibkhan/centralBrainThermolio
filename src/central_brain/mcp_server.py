@@ -9,7 +9,7 @@ from mcp.types import ToolAnnotations
 from .auth import AuthContext
 from .models import MemoryCreate, SearchRequest
 from .archives import ArchiveFile, find_folders, propose_archive
-from .archive_transfer import OriginalManifest, prepare_transfer
+from .archive_transfer import OriginalManifest
 
 current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
@@ -235,7 +235,8 @@ def build_mcp(settings, repo):
         Repeat preparation to resume missing files. Use distinct summary filenames for additional batches.
         No model transcription is needed. Upload success creates a pending archive, never approval.
         """
-        return prepare_transfer(library, settings, current_auth.get(), folder_path, summary,
+        from .project_transfer import prepare_project
+        return prepare_project(library, settings, current_auth.get(), folder_path, summary,
                                 source_reference, files, destination_confirmed, summary_filename)
 
     @mcp.tool(annotations=readonly)

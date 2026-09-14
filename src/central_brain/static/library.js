@@ -28,6 +28,8 @@
     panel.querySelector('.approval-count').textContent = rows.length;
     panel.querySelector('[data-queue-empty]').hidden = rows.some(row => !row.hidden);
     panel.querySelector('.bulk-approval').hidden = queueFilter === 'upload';
+    const recovery = panel.querySelector('[data-batch-recovery]');
+    if (recovery) recovery.hidden = queueFilter === 'ready';
   }
   async function postJSON(url, data) {
     let response;
@@ -115,6 +117,51 @@
       catch (_) { outcome += ' Reload the workspace to check the latest status before continuing.'; }
       busy = false;
       buttons.forEach(button => { button.disabled = false; });
+      document.querySelector('[data-queue-status]').textContent = outcome;
+    }
+  }
+  async function uploadQueue(form) {
+    const files = [...form.elements.files.files, ...form.elements.folder.files];
+    const notice = document.querySelector('[data-queue-status]');
+    if (!files.length) { notice.textContent = 'Select original files or a folder first.'; return; }
+    const inventory = JSON.parse(form.dataset.inventory);
+    const controls = [...form.querySelectorAll('input, button')];
+    controls.forEach(control => { control.disabled = true; });
+    busy = true;
+    let completed = 0;
+    const skipped = [];
+    let outcome = '';
+    try {
+      for (const file of files) {
+        if (file.size > 100 * 1024 * 1024 || !inventory.some(item => !item.ready && item.size === file.size)) {
+          skipped.push(file.name); continue;
+        }
+        notice.textContent = `Checking ${file.name}. ${completed} uploads confirmed.`;
+        const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+        const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+        const matches = inventory.filter(item => !item.ready && item.size === file.size && item.sha256 === hash);
+        if (!matches.length) { skipped.push(file.name); continue; }
+        for (const item of matches) {
+          notice.textContent = `Uploading ${item.name} to ${item.destination}. ${completed} uploads confirmed.`;
+          const data = new FormData();
+          data.set('file', file);
+          data.set('index', item.index);
+          data.set('csrf_token', form.elements.csrf_token.value);
+          await postJSON(`/library/suggestions/${encodeURIComponent(item.archive_id)}/original`, data);
+          item.ready = true;
+          form.dataset.inventory = JSON.stringify(inventory);
+          completed++;
+        }
+      }
+      outcome = `${completed} originals received and ready for approval. ${inventory.filter(item => !item.ready).length} originals in this queue still need upload.`;
+      if (skipped.length) outcome += ` ${skipped.length} selections had no remaining match and were skipped: ${skipped.slice(0, 5).join(', ')}.`;
+    } catch (error) {
+      outcome = `${completed} uploads confirmed. ${error.message} Completed uploads are preserved.`;
+    } finally {
+      try { await refresh(true); }
+      catch (_) { outcome += ' Reload the workspace to check the latest status.'; }
+      busy = false;
+      controls.forEach(control => { control.disabled = false; });
       document.querySelector('[data-queue-status]').textContent = outcome;
     }
   }
@@ -284,6 +331,10 @@
     if (formURL.pathname === '/logout') return;
     event.preventDefault();
     if (busy) return;
+    if (form.hasAttribute('data-queue-batch')) {
+      await uploadQueue(form);
+      return;
+    }
     if (form.matches('.bulk-approval')) {
       await approveQueue(form);
       return;

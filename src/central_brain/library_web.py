@@ -113,6 +113,8 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             results=library.search(auth, q, folder)["results"] if q.strip() else [],
             suggestions=suggestions,
             archive_files=archive_files,
+            recovery_inventory=[{k: str(v) if k == "archive_id" else v for k, v in item.items()}
+                                for item in archive_files if not item["ready"]],
             pending_files=pending_files,
             approval_items=approval_items,
         )

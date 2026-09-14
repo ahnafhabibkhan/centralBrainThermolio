@@ -6,6 +6,17 @@
 <button type="button" data-queue-filter="upload" aria-pressed="false">Finish upload <span data-queue-count="upload">{{ archive_files|rejectattr('ready')|list|length }}</span></button>
 <button type="button" data-queue-filter="all" aria-pressed="false">All items</button>
 </div>
+{% set missing = archive_files|rejectattr('ready')|list %}
+{% if missing %}<details class="queue-upload batch-recovery" data-batch-recovery>
+<summary class="button small upload-action">Finish multiple uploads</summary>
+<p class="hint">Select downloaded originals together or choose a folder. Files are matched by their contents, even if the download changed their names. Only matching pending files are uploaded to the destinations shown below.</p>
+<form data-queue-batch data-inventory="{{ recovery_inventory|tojson|forceescape }}">
+<input type="hidden" name="csrf_token" value="{{ csrf }}">
+<label>Original files<input type="file" name="files" multiple></label>
+<label>Or select a folder<input type="file" name="folder" webkitdirectory multiple></label>
+<button class="primary small">Upload matching originals</button>
+<p class="hint">Completed uploads are preserved. Unmatched files are skipped. Files still need approval after upload.</p>
+</form></details>{% endif %}
 <form method="post" action="/library/approve-all" class="bulk-approval"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="items" value="{{ approval_items|tojson|forceescape }}"><button class="primary small" {% if not approval_items %}disabled{% endif %}>Approve all{% if approval_items %} ({{ approval_items|length }}){% endif %}</button><span class="hint">Approves ready items in small groups. Completed groups stay approved if a later group needs attention. Missing uploads are excluded.</span></form>
 <p data-queue-status role="status" aria-live="polite"></p><progress data-queue-progress hidden aria-label="Approval progress"></progress>
 <div class="approval-table-wrap"><table class="approval-table"><thead><tr><th>Proposed change</th><th>Destination</th><th>Review</th></tr></thead><tbody>

@@ -10,6 +10,7 @@ from .auth import AuthContext
 from .models import MemoryCreate, SearchRequest
 from .archives import ArchiveFile, find_folders, propose_archive
 from .archive_transfer import OriginalManifest
+from .upload_plan import SourceAccess, plan_upload
 
 current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
@@ -65,6 +66,8 @@ def build_mcp(settings, repo):
             "If the host cannot list the whole project, explicitly state that coverage is unverified; do not infer completeness. "
             "Report discovered, received, missing, and inaccessible file counts and paths across all batches. "
             "Do not stop after a sample file, and do not call a project uploaded until every inventoried original is received. "
+            "Before creating a new upload batch, call plan_original_upload with the actual source access and host permission. "
+            "Do not create empty transfer after empty transfer when a host cannot deliver originals. "
             "For binary files or opaque SVG metadata, use prepare_chat_archive_upload with a checksum inventory. "
             "For GitHub originals, obtain a fresh download_url for each file from the connected GitHub Contents API "
             "at the inventoried commit, then call import_github_original. Central Brain fetches and verifies the "
@@ -218,6 +221,18 @@ def build_mcp(settings, repo):
         in place of original bytes. Report omitted originals. Each file is approved in the workspace independently.
         """
         return propose_archive(library, current_auth.get(), folder_path, summary, source_reference, files, destination_confirmed, summary_filename)
+
+    @mcp.tool(annotations=readonly)
+    def plan_original_upload(source_access: SourceAccess, transfer_permitted: bool = False,
+                             inventory_complete: bool = False) -> dict:
+        """Check the upload route before creating proposals or requesting files from the user.
+
+        Report actual host capabilities: code_bytes, github_download, browser_download,
+        text_only, or unknown. Set transfer_permitted only when the host permits the selected
+        source-to-destination transfer. This read-only plan cannot grant host permissions.
+        """
+        current_auth.get().require('reader')
+        return plan_upload(source_access, transfer_permitted, inventory_complete, settings.public_url)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
     def prepare_chat_archive_upload(folder_path: str, summary: str, source_reference: str,

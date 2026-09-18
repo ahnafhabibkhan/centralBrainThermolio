@@ -1,7 +1,9 @@
 import logging
-import time
+import math
+import socket
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from time import monotonic
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -12,6 +14,7 @@ from psycopg_pool import PoolTimeout
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .auth import AuthContext, TokenAuthenticator, authenticate
 from .config import Settings, get_settings
@@ -28,6 +31,18 @@ from .models import (
 from .repository import PostgresMemoryRepository
 
 logger = logging.getLogger("central_brain")
+
+AUTH_RATE_LIMIT_PATHS = frozenset({"/login", "/logout", "/auth/login", "/auth/callback"})
+MIN_AUTH_REQUESTS_PER_MINUTE = 10
+
+
+def trusted_proxy_hosts() -> tuple[str, ...]:
+    hosts = {"127.0.0.1", "::1"}
+    try:
+        hosts.update(socket.gethostbyname_ex("caddy")[2])
+    except OSError:
+        logger.warning("The Caddy service address could not be resolved; forwarded addresses are disabled")
+    return tuple(sorted(hosts))
 
 
 class BodyLimit:
@@ -128,8 +143,12 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
             request.scope["raw_path"] = b"/mcp/"
         request_id = str(uuid4())
         key = request.client.host if request.client else "unknown"
+        bucket_name = "auth" if request.url.path in AUTH_RATE_LIMIT_PATHS else "general"
         auth_marker = None
         request_limit = settings.requests_per_minute
+        if bucket_name == "auth":
+            # Leave enough room for the redirects and one recovery attempt in an OAuth flow.
+            request_limit = max(request_limit, MIN_AUTH_REQUESTS_PER_MINUTE)
         if request.url.path == '/archive-original':
             from .project_transfer import transfer_identity
             authorization = request.headers.get('authorization', '')
@@ -149,6 +168,7 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
                 auth.require("reader")
                 auth_marker = current_auth.set(auth)
                 key = str(auth.principal.actor_id)
+                bucket_name = "mcp"
             except HTTPException as exc:
                 return JSONResponse({"detail": exc.detail}, exc.status_code, headers={
                     "WWW-Authenticate": 'Bearer resource_metadata="'
@@ -156,16 +176,19 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
                 })
         try:
             if request.url.path not in {"/health", "/ready"} and not request.url.path.startswith("/static"):
-                now = int(time.monotonic() // 60)
-                old_window, count = buckets.get(key, (now, 0))
-                count = count + 1 if old_window == now else 1
-                buckets[key] = (now, count)
-                buckets.move_to_end(key)
+                elapsed = monotonic()
+                window = int(elapsed // 60)
+                bucket_key = (bucket_name, key)
+                old_window, count = buckets.get(bucket_key, (window, 0))
+                count = count + 1 if old_window == window else 1
+                buckets[bucket_key] = (window, count)
+                buckets.move_to_end(bucket_key)
                 if len(buckets) > 4096:
                     buckets.popitem(last=False)
                 if count > request_limit:
+                    retry_after = max(1, math.ceil((window + 1) * 60 - elapsed))
                     return JSONResponse({"detail": "too many requests"}, 429,
-                                        headers={"Retry-After": "60"})
+                                        headers={"Retry-After": str(retry_after)})
             response = await call_next(request)
             response.headers.update({
                 "X-Request-ID": request_id,
@@ -187,6 +210,7 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
         headers = dict(exc.headers or {})
         if request.url.path.startswith('/library') and exc.status_code >= 400 and 'application/json' not in request.headers.get('accept', ''):
             from html import escape
+
             from fastapi.responses import HTMLResponse
             return HTMLResponse('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>File action needs attention</title><link rel="stylesheet" href="/static/app.css">'
@@ -297,4 +321,8 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
     from .web import install_web
     install_web(app, settings, repo)
     app.mount("/mcp", mcp_app)
+    if settings.environment == "production":
+        # The application port is private to Docker. Only Caddy and loopback callers may
+        # supply a forwarded client address.
+        app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_proxy_hosts())
     return app

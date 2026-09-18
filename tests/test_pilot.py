@@ -196,6 +196,72 @@ def test_hosted_login_skips_landing_page(pilot):
     assert pilot.client.get('/login?signed_out=true').status_code == 200
 
 
+def production_settings(pilot, requests_per_minute=60):
+    return Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
+        environment='production', public_url='https://brain.example',
+        central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
+        oauth_client_ids=['web'], oauth_web_client_id='web',
+        requests_per_minute=requests_per_minute)
+
+
+def test_rate_limit_uses_forwarded_client_and_isolates_sign_in(pilot, monkeypatch):
+    async def authorization_url(self, redirect_uri=None, **kwargs):
+        return {'url': 'https://auth.example/authorize', 'state': 'expected',
+                'code_verifier': 'verifier', 'nonce': 'nonce'}
+
+    monkeypatch.setattr(StarletteOAuth2App, 'create_authorization_url', authorization_url)
+    monkeypatch.setattr('central_brain.api.monotonic', lambda: 1_000.0)
+    monkeypatch.setattr('central_brain.api.socket.gethostbyname_ex',
+                        lambda host: (host, [], ['172.18.0.2']))
+    app = create_app(pilot.repo, production_settings(pilot, requests_per_minute=2))
+    proxy = ('172.18.0.2', 50000)
+    first = TestClient(app, base_url='https://brain.example', follow_redirects=False,
+                       client=proxy, headers={'X-Forwarded-For': '203.0.113.10'})
+    second = TestClient(app, base_url='https://brain.example', follow_redirects=False,
+                        client=proxy, headers={'X-Forwarded-For': '203.0.113.11'})
+
+    assert first.get('/').status_code == 303
+    assert first.get('/').status_code == 303
+    limited = first.get('/')
+    assert limited.status_code == 429
+    assert limited.json() == {'detail': 'too many requests'}
+    assert 1 <= int(limited.headers['Retry-After']) <= 60
+
+    # A different forwarded client has its own bucket, and unrelated workspace traffic
+    # cannot prevent the original client from starting a sign-in.
+    assert second.get('/').status_code == 303
+    assert first.get('/login?signed_out=true').status_code == 200
+
+    # A complete authentication redirect sequence fits even when the general limit is low.
+    assert first.get('/auth/login').status_code == 302
+    callback = first.get('/auth/callback?code=unused&state=missing')
+    assert callback.status_code in {200, 303}
+
+    # Authentication remains rate limited in its own bucket after the flow allowance.
+    for _ in range(7):
+        assert first.get('/login?signed_out=true').status_code == 200
+    auth_limited = first.get('/login?signed_out=true')
+    assert auth_limited.status_code == 429
+    assert auth_limited.headers['Retry-After']
+
+    first.close()
+    second.close()
+
+
+def test_untrusted_client_cannot_spoof_rate_limit_identity(pilot, monkeypatch):
+    monkeypatch.setattr('central_brain.api.monotonic', lambda: 1_000.0)
+    monkeypatch.setattr('central_brain.api.socket.gethostbyname_ex',
+                        lambda host: (host, [], ['172.18.0.2']))
+    app = create_app(pilot.repo, production_settings(pilot, requests_per_minute=2))
+    client = TestClient(app, base_url='https://brain.example', follow_redirects=False,
+                        client=('198.51.100.20', 50000))
+
+    assert client.get('/', headers={'X-Forwarded-For': '203.0.113.20'}).status_code == 303
+    assert client.get('/', headers={'X-Forwarded-For': '203.0.113.21'}).status_code == 303
+    assert client.get('/', headers={'X-Forwarded-For': '203.0.113.22'}).status_code == 429
+    client.close()
+
+
 @pytest.mark.parametrize('endpoint', ['/mcp', '/mcp/'])
 def test_mcp_tools_and_auth(pilot, endpoint):
     c = pilot.client

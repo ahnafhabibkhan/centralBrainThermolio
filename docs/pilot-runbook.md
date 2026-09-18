@@ -85,6 +85,7 @@ Create `/opt/central-brain/deploy/.env` with permissions `0600`. Generate indepe
 | `OAUTH_WEB_CLIENT_SECRET` | Use the web client secret. |
 | `OAUTH_SCOPE_PREFIX` | Use the exact MCP resource URL, including its trailing slash. |
 | `OAUTH_PRINCIPALS_JSON` | Map the approved Cognito subject as shown below. |
+| `REQUESTS_PER_MINUTE` | Keep the default of 60 unless measured traffic justifies a reviewed change. |
 
 ```json
 {"APPROVED_COGNITO_SUB":{"workspace_id":"a22cdb8e-6c0d-4b59-b292-a4e5593156c1","actor_id":"f1aa197b-4291-4d81-a00c-cab55a1ceff0","roles":["reader","writer","reviewer","admin"],"sensitivities":["public","internal"]}}

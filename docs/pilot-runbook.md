@@ -121,7 +121,7 @@ Check the issuer's discovery metadata and authorization flow for PKCE S256 and r
 
 For each assistant, propose an explicitly labeled test memory with its source. Confirm it is absent from retrieval before approval. Sign in to the review page and approve it. Retrieve it from the other assistant, then reject another proposal and confirm that it remains hidden. Test correction, export, deletion, logout, expired-token rejection, and permission denial on reviewer routes. Remove test records through the review interface afterward.
 
-The server publishes four MCP tools: `search_memories`, `propose_memory`, `list_skills`, and `get_skill`. It provides no approve or delete tool. Assistant behavior depends on tool use and instructions; it does not automatically watch every conversation.
+The server publishes memory, context, library, organization, and checksum-bound original-upload tools. It provides no approve or delete tool. Assistant behavior depends on tool use and instructions; it does not automatically watch every conversation.
 
 ## 7. Configure and verify backups
 

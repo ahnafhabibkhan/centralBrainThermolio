@@ -23,7 +23,7 @@ Your uploads become available immediately, with search available after processin
 
 `search_library` searches indexed document text, names, folder paths, and approved memories. It returns up to eight excerpts with file IDs, paths, versions, and source locations. `list_folder` lists up to 100 items with an offset. `get_file_info` reports versions and indexed worksheet names. `read_file_sections` retrieves up to three sections. `read_spreadsheet_rows` returns at most 20 indexed rows and 16,000 content characters. Neither service automatically reads all uploaded content or captures every conversation.
 
-Use `propose_file` for a pending Markdown or text file with a source reference, and `suggest_organization` for pending folder or move suggestions. The original four memory and skill tools remain available.
+Use `propose_file` only for a generated Markdown or text note containing at most 20,000 characters. It appends the source reference and therefore does not preserve the exact original bytes. For a finished document already present in a code filesystem, prefer `prepare_chat_archive_upload` so that Central Brain verifies its byte size and SHA-256 before preserving the raw bytes. Use `propose_chat_archive` only when exact UTF-8 content is already available inline, each original contains at most 200,000 characters, and the full proposal fits within 240 KB. Use `suggest_organization` for pending folder or move suggestions. The memory and skill tools remain available.
 
 After deployment, refresh the Central Brain connector's tools in Claude and the plugin's information in ChatGPT. Start a fresh chat if a client retains its old tool list.
 

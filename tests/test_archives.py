@@ -98,6 +98,31 @@ def test_archive_originals_folder_context_and_duplicate(pilot, library):
     assert 'files' not in payload and 'summary' not in payload
 
 
+def test_connector_preserves_reported_large_markdown_original(pilot, library):
+    content = ('Controller authority handover context line.\n' * 1000)[:29040]
+    assert len(content) == 29040
+    response = pilot.client.post('/mcp/', headers={
+        'Authorization':'Bearer assistant', 'Accept':'application/json, text/event-stream'},
+        json={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{
+            'name':'propose_chat_archive','arguments':{
+                'folder_path':'Projects/180 Bloor/Chats/Controller authority',
+                'summary':'Controller authority handover session context.',
+                'source_reference':'Claude Code session handover test',
+                'destination_confirmed':True,
+                'files':[{'name':'180Bloor_Handover_ControllerAuthority.md',
+                          'content':content,'encoding':'utf8'}]}}})
+    assert response.status_code == 200
+    result = response.json()['result']
+    assert not result.get('isError')
+    proposal = json.loads(result['content'][0]['text'])
+    approve_batch(library, pilot.auth,
+                  selection(library, pilot.auth, [('suggestion', UUID(proposal['id']))]))
+    node = next(n for n in library.snapshot(pilot.auth)
+                if n['name'] == '180Bloor_Handover_ControllerAuthority.md')
+    with library.download(pilot.auth, node['id'])[1] as stream:
+        assert stream.read() == content.encode()
+
+
 def test_bulk_approves_only_shown_items_and_rejects_stale_batch(pilot, library):
     first = pilot.repo.create(pilot.auth, memory())
     file = library.upload(pilot.auth, 'Pending.txt', b'Pending original.', proposed=True)

@@ -6,10 +6,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
+from .archive_transfer import OriginalManifest
+from .archives import ArchiveFile, find_folders, propose_archive
 from .auth import AuthContext
 from .models import MemoryCreate, SearchRequest
-from .archives import ArchiveFile, find_folders, propose_archive
-from .archive_transfer import OriginalManifest
 from .upload_plan import SourceAccess, plan_upload
 
 current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
@@ -17,6 +17,7 @@ current_auth: ContextVar[AuthContext] = ContextVar("brain_auth")
 
 def build_mcp(settings, repo):
     from uuid import UUID
+
     from .library import Library
     library = Library(repo, settings)
     origin = urlsplit(settings.public_url)
@@ -89,7 +90,11 @@ def build_mcp(settings, repo):
             "A blocked transfer is pending work; report its missing files instead of saying there is nothing new to save. "
             "Transfer files sequentially with code, up to 100 MB each and 100 files per batch, preserving relative paths. "
             "PDF, XLSX and PPTX originals are supported. The text-only propose_file tool is not the binary upload tool. "
-            "Use prepare_chat_archive_upload and its original transfer tools for these files; preserve their exact bytes. "
+            "Use propose_file only for generated Markdown or text notes of at most 20,000 characters. It appends "
+            "the source reference and does not preserve exact original bytes. When a finished text document or other "
+            "original exists in the code filesystem, use prepare_chat_archive_upload with its byte size and SHA-256, "
+            "then transfer its raw bytes through the returned route. Use propose_chat_archive only when exact UTF-8 "
+            "content is already available and each file has at most 200,000 characters within the 240 KB total payload. "
             "Never recommend text extracts as replacements merely because propose_file accepts only text. "
             "If a project API returns only extracted text, do not conclude that the original cannot be downloaded. "
             "When authorized browser tools are available, check the source project's file viewer and Download action "
@@ -349,15 +354,23 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False))
     def propose_file(name: str, content: str, source_reference: str, folder_id: str | None = None) -> dict:
-        """Propose a new Markdown or plain-text note for human approval.
+        """Propose a generated Markdown or plain-text note for human approval.
 
-        For original PDF, XLSX, PPTX or other binary files, use prepare_chat_archive_upload,
-        then the returned upload path or import_github_original. Binary originals are supported
-        up to 100 MB each. Do not substitute text extracts for them.
+        This tool accepts at most 20,000 characters and appends the source reference, so it does
+        not preserve exact original bytes. For a finished text document or a larger text original,
+        use propose_chat_archive or prepare_chat_archive_upload. For PDF, XLSX, PPTX, or other
+        binary originals, use prepare_chat_archive_upload and its returned transfer path.
+        Originals are supported up to 100 MB each. Do not substitute text extracts for them.
         Do not include credentials or unnecessary sensitive information.
         """
-        if not name.lower().endswith(('.md','.txt')) or len(content)>20000 or not 1<=len(source_reference)<=1000:
+        if not name.lower().endswith(('.md','.txt')):
             return {'error':'This tool creates text notes only. For PDF, XLSX, PPTX and other original files, use prepare_chat_archive_upload and its transfer tools. Originals up to 100 MB are supported.'}
+        if len(content) > 20000:
+            return {'error':'This text file exceeds the 20,000-character propose_file limit. Use propose_chat_archive for a small exact UTF-8 original, or prepare_chat_archive_upload for a checksum-bound original upload.'}
+        if not content:
+            return {'error':'Provide note content with 1 to 20,000 characters.'}
+        if not 1 <= len(source_reference) <= 1000:
+            return {'error':'Provide a source reference with 1 to 1,000 characters.'}
         from .note_proposals import propose_note
         return propose_note(library, current_auth.get(), name, content, source_reference,
                             UUID(folder_id) if folder_id else None)

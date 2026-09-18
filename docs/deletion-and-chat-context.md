@@ -28,7 +28,7 @@ Skills/
   commissioning-checklist.md
 ```
 
-This is a recommended layout, not an archive already created. The current connector proposes folders and text files separately. New folders need approval before files can be proposed inside them. It can send Markdown or plain-text content of up to 20,000 characters per proposed file, with a source reference. It cannot automatically collect every attachment from a chat. Upload original PDFs, Word documents and spreadsheets through the platform, into the intended folder. Generated summaries should be clearly distinguished from original files.
+This is a recommended layout, not an archive already created. The connector can propose a folder and its transferred originals together through the chat-archive tools. `propose_file` is limited to generated Markdown or plain-text notes of up to 20,000 characters and does not preserve exact bytes. Archive tools can preserve supported originals when the host exposes their bytes; inaccessible attachments must still be identified rather than claimed as transferred. Generated summaries must be clearly distinguished from original files.
 
 A practical request is: “Use Central Brain to save a summary and the confirmed decisions from this chat under Projects / Boiler upgrade / Chats / 2026-09-11 Design review. Reuse existing folders, include this chat's source reference, and tell me which original attachments I still need to upload.” Review proposals in the top approval section. Approved files then appear in the folder map and become searchable after indexing.
 

@@ -183,36 +183,40 @@
     const input = form.querySelector('input[type="file"]');
     const selection = folderSelections.get(form) || folderSelectionFromInput(input);
     if (!selection.files.length) { message('Choose or drop a folder containing files.', true); return; }
-    const paths = selection.files.map(item => item.path.split('/').filter(Boolean));
+    const invalidSizes = selection.files.filter(item => !item.file.size || item.file.size > fileLimit);
+    if (invalidSizes.length && !form.elements.skip_invalid.checked) {
+      const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
+      const remaining = invalidSizes.length > 3 ? `, plus ${invalidSizes.length - 3} more` : '';
+      message(`These files are empty or exceed 100 MB: ${names}${remaining}. Select the skip option to upload the remaining files.`, true); return;
+    }
+    const files = invalidSizes.length
+      ? selection.files.filter(item => item.file.size && item.file.size <= fileLimit)
+      : selection.files;
+    if (!files.length) { message('No uploadable files remain after applying the skip option.', true); return; }
+    const paths = files.map(item => item.path.split('/').filter(Boolean));
     const roots = new Set(paths.map(parts => parts[0]));
     if (roots.size !== 1 || paths.some(parts => parts.length < 2 || parts.some(part => !validSegment(part)))) {
       message('Choose one folder with valid file and folder names.', true); return;
     }
     const rootName = [...roots][0];
     selection.directories.add(rootName);
-    const total = selection.files.reduce((sum, item) => sum + item.file.size, 0);
+    const total = files.reduce((sum, item) => sum + item.file.size, 0);
     const limit = Number(document.getElementById('library-actions').dataset.folderLimit);
     if (!total || total > limit) {
       message(`The folder must contain data and be no larger than ${formatBytes(limit)}.`, true); return;
     }
-    if (selection.files.length + selection.directories.size > 10000) {
+    if (files.length + selection.directories.size > 10000) {
       message('The folder exceeds the 10,000-item library limit.', true); return;
     }
-    if (selection.files.some(item => !accepted(item.file, input))) {
+    if (files.some(item => !accepted(item.file, input))) {
       message('The folder contains an unsupported file format.', true); return;
-    }
-    const invalidSizes = selection.files.filter(item => !item.file.size || item.file.size > fileLimit);
-    if (invalidSizes.length) {
-      const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
-      const remaining = invalidSizes.length > 3 ? `, plus ${invalidSizes.length - 3} more` : '';
-      message(`These files are empty or exceed 100 MB: ${names}${remaining}.`, true); return;
     }
     busy = true;
     const controls = [...form.querySelectorAll('input, select, button')];
     controls.forEach(control => { control.disabled = true; });
     const progress = form.querySelector('progress');
     const directories = [...selection.directories].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
-    progress.max = directories.length + selection.files.length; progress.value = 0; progress.hidden = false;
+    progress.max = directories.length + files.length; progress.value = 0; progress.hidden = false;
     let completedFiles = 0;
     let completedFolders = 0;
     let rootId = '';
@@ -223,7 +227,7 @@
       start.set('visibility', form.elements.visibility.value);
       start.set('name', rootName);
       start.set('total_size', String(total));
-      start.set('file_count', String(selection.files.length));
+      start.set('file_count', String(files.length));
       start.set('folder_count', String(directories.length));
       message(`Preparing ${rootName}.`);
       const root = await postJSON('/library/folder-upload/start', start);
@@ -243,7 +247,7 @@
         folderIds.set(path, created.id);
         completedFolders++; progress.value++;
       }
-      for (const item of selection.files) {
+      for (const item of files) {
         const parts = item.path.split('/');
         const parentPath = parts.slice(0, -1).join('/');
         const data = new FormData();
@@ -251,7 +255,7 @@
         data.set('parent_id', folderIds.get(parentPath));
         data.set('visibility', form.elements.visibility.value);
         data.set('file', item.file, parts.at(-1));
-        message(`Uploading ${item.path}. ${completedFiles} of ${selection.files.length} files complete.`);
+        message(`Uploading ${item.path}. ${completedFiles} of ${files.length} files complete.`);
         await postJSON('/library/upload', data);
         completedFiles++; progress.value++;
       }
@@ -259,7 +263,8 @@
       folderSelections.delete(form);
       selected = rootId;
       await refresh(true);
-      message(`${rootName} uploaded with ${completedFiles} files and ${completedFolders} folders.`);
+      const skipped = invalidSizes.length ? ` ${invalidSizes.length} empty or oversized files were skipped.` : '';
+      message(`${rootName} uploaded with ${completedFiles} files and ${completedFolders} folders.${skipped}`);
     } catch (error) {
       dirty = false;
       if (rootId) selected = rootId;

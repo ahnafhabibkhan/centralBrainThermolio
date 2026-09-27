@@ -295,6 +295,8 @@ main { max-width:1440px; padding:32px 36px 60px; }
 .drop-zone .button { margin:10px auto 4px; }
 .drop-zone.drop-active { border-color:#1D6F5E; background:#F0F6F4; outline:3px solid #4DA28E55; }
 .drop-selection { min-height:21px; overflow-wrap:anywhere; }
+.skip-files { display:flex; align-items:flex-start; gap:9px; margin:14px 0; font-weight:500; line-height:1.4; }
+.skip-files input { flex:0 0 auto; width:auto; margin:3px 0 0; }
 .folder-heading-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .card { background:#fff; border:1px solid #d6d8d9; border-radius:5px; padding:20px; margin:18px 0; }
 dialog { width:min(880px,94vw); max-height:90vh; border:1px solid #d6d8d9; border-radius:9px; padding:24px; color:#222; }

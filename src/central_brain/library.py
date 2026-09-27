@@ -11,7 +11,11 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
-EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt", ".svg", ".png", ".jpg", ".jpeg", ".webp"}
+EXTENSIONS = {
+    ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt", ".svg",
+    ".png", ".jpg", ".jpeg", ".webp", ".heic", ".zip", ".mp4", ".eml",
+    ".dwg", ".dxf", ".url", ".db",
+}
 
 
 def filename(value):
@@ -606,7 +610,11 @@ class Library:
         from .project_transfer import reserved_bytes
         name = filename(name)
         if Path(name).suffix.lower() not in EXTENSIONS:
-            raise HTTPException(422, "Supported formats: PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, SVG, PNG, JPG, WEBP.")
+            raise HTTPException(
+                422,
+                "Supported formats: PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, SVG, PNG, "
+                "JPG, JPEG, WEBP, HEIC, ZIP, MP4, EML, DWG, DXF, URL, DB.",
+            )
         if visibility not in {"private", "workspace"}:
             raise HTTPException(422, "Invalid visibility.")
         if not data or len(data) > self.settings.library_file_bytes:

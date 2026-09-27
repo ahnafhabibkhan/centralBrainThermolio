@@ -75,14 +75,19 @@
     return value && value.length <= 240 && !['.', '..'].includes(value)
       && !/[\\/\u0000-\u001f]/.test(value);
   }
+  function systemFile(path) {
+    const name = path.split('/').at(-1).toLowerCase();
+    return name === '.ds_store' || name === 'thumbs.db' || name === 'desktop.ini';
+  }
   function folderSelectionFromInput(input) {
-    const files = [...input.files].map(file => ({file, path: file.webkitRelativePath || file.name}));
+    const selected = [...input.files].map(file => ({file, path: file.webkitRelativePath || file.name}));
+    const files = selected.filter(item => !systemFile(item.path));
     const directories = new Set();
     files.forEach(({path}) => {
       const parts = path.split('/').filter(Boolean);
       for (let end = 1; end < parts.length; end++) directories.add(parts.slice(0, end).join('/'));
     });
-    return {files, directories};
+    return {files, directories, ignored: selected.length - files.length};
   }
   function showSelection(form, selection, folder = false) {
     const notice = form.querySelector('[data-drop-selection]');
@@ -91,6 +96,7 @@
     notice.textContent = files.length
       ? `${folder ? 'Folder selected' : `${files.length} file${files.length === 1 ? '' : 's'} selected`}: ${formatBytes(total)}.`
       : folder ? 'No folder selected.' : 'No files selected.';
+    if (folder && selection.ignored) notice.textContent += ` ${selection.ignored} system metadata files will be ignored.`;
   }
   function readEntryFile(entry) {
     return new Promise((resolve, reject) => entry.file(resolve, reject));
@@ -101,6 +107,7 @@
   async function collectEntry(entry, parent, selection) {
     const path = parent ? `${parent}/${entry.name}` : entry.name;
     if (entry.isFile) {
+      if (systemFile(path)) { selection.ignored++; return; }
       selection.files.push({file: await readEntryFile(entry), path});
       return;
     }
@@ -114,7 +121,7 @@
     }
   }
   async function droppedFolder(dataTransfer) {
-    const selection = {files: [], directories: new Set()};
+    const selection = {files: [], directories: new Set(), ignored: 0};
     const entries = [...dataTransfer.items]
       .map(item => item.webkitGetAsEntry?.()).filter(Boolean);
     if (entries.length) {
@@ -123,8 +130,9 @@
     }
     const inputLike = [...dataTransfer.files]
       .map(file => ({file, path: file.webkitRelativePath || file.name}));
-    selection.files = inputLike;
-    inputLike.forEach(({path}) => {
+    selection.files = inputLike.filter(item => !systemFile(item.path));
+    selection.ignored = inputLike.length - selection.files.length;
+    selection.files.forEach(({path}) => {
       const parts = path.split('/').filter(Boolean);
       for (let end = 1; end < parts.length; end++) selection.directories.add(parts.slice(0, end).join('/'));
     });
@@ -193,8 +201,11 @@
     if (selection.files.some(item => !accepted(item.file, input))) {
       message('The folder contains an unsupported file format.', true); return;
     }
-    if (selection.files.some(item => !item.file.size || item.file.size > fileLimit)) {
-      message('Every file must contain data and be no larger than 100 MB.', true); return;
+    const invalidSizes = selection.files.filter(item => !item.file.size || item.file.size > fileLimit);
+    if (invalidSizes.length) {
+      const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
+      const remaining = invalidSizes.length > 3 ? `, plus ${invalidSizes.length - 3} more` : '';
+      message(`These files are empty or exceed 100 MB: ${names}${remaining}.`, true); return;
     }
     busy = true;
     const controls = [...form.querySelectorAll('input, select, button')];

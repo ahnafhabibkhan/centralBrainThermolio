@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from test_pilot import pilot, memory
 from central_brain.auth import AuthContext
 from central_brain.extract import extract
-from central_brain.library import Library
+from central_brain.library import EXTENSIONS, Library
 from central_brain.library_worker import process_one
 
 
@@ -101,6 +101,10 @@ def test_limits_cycles_and_quota_race(pilot, library):
 
 
 def test_extract_formats_and_bounds(tmp_path):
+    assert {".heic", ".zip", ".mp4", ".eml", ".dwg", ".dxf", ".url", ".db"} <= EXTENSIONS
+    asset = tmp_path / "plan.dwg"
+    asset.write_bytes(b"binary drawing")
+    assert extract(asset, ".dwg")["sections"][0]["location"] == "Original file"
     text = tmp_path / "text"
     text.write_text("x" * 1001000)
     assert extract(text, ".txt")["state"] == "partial"

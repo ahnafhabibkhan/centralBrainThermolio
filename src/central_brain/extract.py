@@ -32,8 +32,11 @@ def extract(path, extension):
                 or len(archive.infolist()) > 10000
             ):
                 raise ValueError("Expanded document exceeds processing limits.")
-    if extension in {".png", ".jpg", ".jpeg", ".webp"}:
+    if extension in {".png", ".jpg", ".jpeg", ".webp", ".heic"}:
         return {"sections": [{"location": "Original image", "content": "Original image asset. Download the file to view it. Image text recognition is not enabled."}],
+                "state": "ready", "error": None}
+    if extension in {".zip", ".mp4", ".eml", ".dwg", ".dxf", ".url", ".db"}:
+        return {"sections": [{"location": "Original file", "content": "Original file asset. Download the file to open it in a compatible application."}],
                 "state": "ready", "error": None}
     if extension == ".pdf":
         from pypdf import PdfReader

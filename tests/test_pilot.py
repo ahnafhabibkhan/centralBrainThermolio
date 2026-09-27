@@ -232,13 +232,17 @@ def test_rate_limit_uses_forwarded_client_and_isolates_sign_in(pilot, monkeypatc
     assert second.get('/').status_code == 303
     assert first.get('/login?signed_out=true').status_code == 200
 
-    # A complete authentication redirect sequence fits even when the general limit is low.
-    assert first.get('/auth/login').status_code == 302
+    # A complete authentication redirect sequence, including the cookie preflight, fits
+    # even when the general limit is low.
+    preflight = first.get('/auth/login')
+    assert preflight.status_code == 303
+    assert preflight.headers['location'] == '/auth/login?cookie_check=true'
+    assert first.get(preflight.headers['location']).status_code == 302
     callback = first.get('/auth/callback?code=unused&state=missing')
     assert callback.status_code in {200, 303}
 
     # Authentication remains rate limited in its own bucket after the flow allowance.
-    for _ in range(7):
+    for _ in range(6):
         assert first.get('/login?signed_out=true').status_code == 200
     auth_limited = first.get('/login?signed_out=true')
     assert auth_limited.status_code == 429
@@ -327,14 +331,36 @@ def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
         return {'access_token': jwt.encode(claims, key, algorithm='RS256'),
                 'expires_at': claims['exp'].timestamp()}
 
+    async def authorization_url(self, redirect_uri=None, **kwargs):
+        return {'url': 'https://auth.example/authorize', 'state': 'expected',
+                'code_verifier': 'verifier', 'nonce': 'nonce'}
+
     monkeypatch.setattr(StarletteOAuth2App, 'authorize_access_token', exchange)
+    monkeypatch.setattr(StarletteOAuth2App, 'create_authorization_url', authorization_url)
     app = create_app(pilot.repo, settings)
     app.state.authenticator.jwks = SimpleNamespace(
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key()))
     with TestClient(app, base_url=settings.public_url) as client:
-        response = client.get('/auth/callback', follow_redirects=False)
+        preflight = client.get('/auth/login', follow_redirects=False)
+        assert preflight.headers['location'] == '/auth/login?cookie_check=true'
+        oauth_cookie = next(value for value in preflight.headers.get_list('set-cookie')
+                            if value.startswith('brain_oauth='))
+        assert 'HttpOnly' in oauth_cookie
+        assert 'Max-Age=600' in oauth_cookie
+        assert 'Path=/auth' in oauth_cookie
+        assert 'SameSite=none' in oauth_cookie
+        assert 'Secure' in oauth_cookie
+        started = client.get(preflight.headers['location'], follow_redirects=False)
+        assert started.status_code == 302
+        assert started.headers['location'].startswith('https://auth.example/authorize')
+        response = client.get('/auth/callback?code=valid&state=expected', follow_redirects=False)
         assert response.status_code == 303
         assert response.headers['location'] == '/'
+        session_cookie = next(value for value in response.headers.get_list('set-cookie')
+                              if value.startswith('brain_session='))
+        assert 'httponly' in session_cookie.lower()
+        assert 'samesite=lax' in session_cookie.lower()
+        assert 'secure' in session_cookie.lower()
         assert client.get('/').status_code == 200
         assert client.get('/login', follow_redirects=False).headers['location'] == '/'
         async def repeated_exchange(self, request, **kwargs):
@@ -345,13 +371,20 @@ def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
         assert client.get('/').status_code == 200
         monkeypatch.setattr(StarletteOAuth2App, 'authorize_access_token', exchange)
         client.cookies.clear()
+        preflight = client.get('/auth/login', follow_redirects=False)
+        client.get(preflight.headers['location'], follow_redirects=False)
         del claims['aud']
-        rejected = client.get('/auth/callback')
+        rejected = client.get('/auth/callback?code=invalid&state=expected')
         assert 'Sign-in failed' in rejected.text
         assert client.get('/', follow_redirects=False).status_code == 303
 
 
-def test_expired_oauth_state_restarts_once_without_accepting_callback(pilot, monkeypatch):
+def test_oauth_cookie_preflight_and_callback_rejection(pilot, monkeypatch):
+    async def authorization_url(self, redirect_uri=None, **kwargs):
+        return {'url': 'https://auth.example/authorize', 'state': 'expected',
+                'code_verifier': 'verifier', 'nonce': 'nonce'}
+
+    monkeypatch.setattr(StarletteOAuth2App, 'create_authorization_url', authorization_url)
     settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
         environment='production', public_url='https://brain.example',
         central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
@@ -363,12 +396,25 @@ def test_expired_oauth_state_restarts_once_without_accepting_callback(pilot, mon
         assert missing.status_code == 200
         assert 'Allow cookies' in missing.text
         assert client.get('/', follow_redirects=False).status_code == 303
+
+        # The first same-site redirect writes a dedicated OAuth cookie. If the browser
+        # does not return it, the failure is shown before leaving for Cognito.
         client.cookies.clear()
-        client.get('/login?signed_out=true')
+        preflight = client.get('/auth/login', follow_redirects=False)
+        assert preflight.status_code == 303
+        assert preflight.headers['location'] == '/auth/login?cookie_check=true'
+        client.cookies.clear()
+        blocked = client.get(preflight.headers['location'], follow_redirects=False)
+        assert blocked.status_code == 200
+        assert 'could not store its secure sign-in cookie' in blocked.text
+
+        # A returned transaction cookie with a different state is rejected without
+        # clearing or weakening the stricter workspace session cookie.
+        client.cookies.clear()
+        preflight = client.get('/auth/login', follow_redirects=False)
+        started = client.get(preflight.headers['location'], follow_redirects=False)
+        assert started.status_code == 302
         expired = client.get('/auth/callback?code=unused&state=expired', follow_redirects=False)
-        assert expired.status_code == 303
-        assert expired.headers['location'] == '/auth/login'
-        repeated = client.get('/auth/callback?code=unused&state=expired', follow_redirects=False)
-        assert repeated.status_code == 200
-        assert 'Allow cookies' in repeated.text
+        assert expired.status_code == 200
+        assert 'expired or did not match' in expired.text
         assert client.get('/', follow_redirects=False).status_code == 303

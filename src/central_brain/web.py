@@ -1,16 +1,18 @@
 import base64
 import hashlib
+import json
 import logging
 import secrets
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
-from authlib.integrations.starlette_client import OAuth
 from authlib.integrations.base_client.errors import MismatchingStateError
+from authlib.integrations.starlette_client import OAuth
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -19,6 +21,9 @@ from starlette.concurrency import run_in_threadpool
 from .models import MemoryCreate, Source
 
 logger = logging.getLogger("central_brain")
+
+OAUTH_COOKIE = "brain_oauth"
+OAUTH_COOKIE_MAX_AGE = 600
 
 
 def markdown_content(file):
@@ -58,6 +63,41 @@ def install_web(app, settings, repo):
         if "csrf" not in request.session:
             request.session["csrf"] = secrets.token_urlsafe(32)
         return request.session["csrf"]
+
+    def oauth_transaction(request):
+        value = request.cookies.get(OAUTH_COOKIE)
+        if not value:
+            return None
+        try:
+            transaction = json.loads(cipher.decrypt(
+                value.encode(), ttl=OAUTH_COOKIE_MAX_AGE,
+            ).decode())
+        except (InvalidToken, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return transaction if isinstance(transaction, dict) else None
+
+    def set_oauth_cookie(response, transaction):
+        value = cipher.encrypt(json.dumps(transaction, separators=(",", ":")).encode()).decode()
+        response.set_cookie(
+            OAUTH_COOKIE, value, max_age=OAUTH_COOKIE_MAX_AGE, path="/auth",
+            secure=settings.environment == "production", httponly=True,
+            samesite="none" if settings.environment == "production" else "lax",
+        )
+
+    def clear_oauth_cookie(response):
+        response.delete_cookie(
+            OAUTH_COOKIE, path="/auth", secure=settings.environment == "production",
+            httponly=True, samesite="none" if settings.environment == "production" else "lax",
+        )
+
+    @contextmanager
+    def use_oauth_transaction(request, transaction):
+        workspace_session = request.scope["session"]
+        request.scope["session"] = transaction
+        try:
+            yield
+        finally:
+            request.scope["session"] = workspace_session
 
     def check_csrf(request, value):
         if not secrets.compare_digest(request.session.get("csrf", ""), value) or not value:
@@ -133,7 +173,7 @@ def install_web(app, settings, repo):
         return RedirectResponse("/", 303)
 
     @app.get("/auth/login", include_in_schema=False)
-    async def oauth_login(request: Request):
+    async def oauth_login(request: Request, cookie_check: bool = False):
         if not settings.oauth_issuer:
             return RedirectResponse("/login", 303)
         if request.session.get('sid'):
@@ -143,9 +183,25 @@ def install_web(app, settings, repo):
                 pass
             else:
                 return RedirectResponse('/', 303)
-        return await oauth.cognito.authorize_redirect(
-            request, settings.public_url + "/auth/callback", resource=settings.oauth_resource,
-        )
+        if not cookie_check:
+            response = RedirectResponse("/auth/login?cookie_check=true", 303)
+            set_oauth_cookie(response, {"probe": True})
+            return response
+        transaction = oauth_transaction(request)
+        if not transaction or transaction.get("probe") is not True:
+            logger.warning("OAuth transaction cookie preflight failed")
+            response = page(request, "login.html", title="Sign-in needs attention",
+                            error="Central Brain could not store its secure sign-in cookie. "
+                                  "Allow cookies for this site, then select Sign in to Thermolio.")
+            clear_oauth_cookie(response)
+            return response
+        transaction.clear()
+        with use_oauth_transaction(request, transaction):
+            response = await oauth.cognito.authorize_redirect(
+                request, settings.public_url + "/auth/callback", resource=settings.oauth_resource,
+            )
+        set_oauth_cookie(response, transaction)
+        return response
 
     @app.get("/auth/callback", include_in_schema=False)
     async def oauth_callback(request: Request):
@@ -159,31 +215,40 @@ def install_web(app, settings, repo):
                 pass
             else:
                 return RedirectResponse('/', 303)
+        transaction = oauth_transaction(request)
+        if transaction is None:
+            logger.warning("OAuth callback transaction cookie missing or invalid")
+            response = page(request, "login.html", title="Sign-in needs attention",
+                            error="Your sign-in session could not be restored. Allow cookies for "
+                                  "this site, then select Sign in to Thermolio to try again.")
+            clear_oauth_cookie(response)
+            return response
         stage = "token exchange"
         try:
-            token = await oauth.cognito.authorize_access_token(request, resource=settings.oauth_resource)
+            with use_oauth_transaction(request, transaction):
+                token = await oauth.cognito.authorize_access_token(
+                    request, resource=settings.oauth_resource,
+                )
             stage = "workspace session"
             await run_in_threadpool(establish, request, token["access_token"],
                                     min(token.get("expires_at", time.time()), time.time() + 3600))
         except MismatchingStateError:
-            # Restart with fresh state and PKCE, never accept an unbound callback.
-            last_restart = request.session.get("oauth_restart_at", 0)
-            restart = bool(request.session) and time.time() - last_restart > 300
-            request.session.clear()
-            request.session["oauth_restart_at"] = time.time()
-            logger.warning("OAuth callback state expired or missing; restarting=%s",
-                           restart)
-            if restart:
-                return RedirectResponse("/auth/login", 303)
-            return page(request, "login.html", title="Sign-in needs attention",
-                        error="Your sign-in session could not be restored. Allow cookies for this site, then select Sign in to Thermolio to try again.")
+            logger.warning("OAuth callback state expired or mismatched")
+            response = page(request, "login.html", title="Sign-in needs attention",
+                            error="Your sign-in session expired or did not match. Select Sign in "
+                                  "to Thermolio to start a new secure sign-in.")
+            clear_oauth_cookie(response)
+            return response
         except Exception as exc:  # noqa: BLE001  OAuth failures must not expose credentials.
             logger.warning("OAuth callback failed at %s: %s (cause: %s)", stage,
                            type(exc).__name__, type(exc.__cause__).__name__)
-            request.session.clear()
-            return page(request, "login.html", title="Sign-in needs attention",
-                        error="Sign-in failed. Check the approved account and OAuth configuration.")
-        return RedirectResponse("/", 303)
+            response = page(request, "login.html", title="Sign-in needs attention",
+                            error="Sign-in failed. Check the approved account and OAuth configuration.")
+            clear_oauth_cookie(response)
+            return response
+        response = RedirectResponse("/", 303)
+        clear_oauth_cookie(response)
+        return response
 
     @app.post("/logout", include_in_schema=False)
     def logout(request: Request, csrf_token: str = Form(...)):

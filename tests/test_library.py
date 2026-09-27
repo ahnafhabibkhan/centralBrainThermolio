@@ -170,6 +170,7 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
     assert 'data-drop-zone="file"' in page
     assert 'data-drop-zone="folder"' in page
     assert 'data-folder-upload' in page
+    assert "10,000 combined files and folders" in page
 
     too_large = client.post(
         "/library/folder-upload/start",
@@ -179,6 +180,15 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
     )
     assert too_large.status_code == 413
     assert "5 GB" in too_large.json()["detail"]
+
+    too_many = client.post(
+        "/library/folder-upload/start",
+        data={"csrf_token": csrf, "name": "Too many", "total_size": 1,
+              "file_count": 10000, "folder_count": 1},
+        headers={"Accept": "application/json"},
+    )
+    assert too_many.status_code == 413
+    assert "10,000-item" in too_many.json()["detail"]
 
     started = client.post(
         "/library/folder-upload/start",

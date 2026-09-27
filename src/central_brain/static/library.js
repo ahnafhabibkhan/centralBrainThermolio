@@ -187,8 +187,8 @@
     if (!total || total > limit) {
       message(`The folder must contain data and be no larger than ${formatBytes(limit)}.`, true); return;
     }
-    if (selection.files.length + selection.directories.size > 2000) {
-      message('The folder exceeds the 2,000-item library limit.', true); return;
+    if (selection.files.length + selection.directories.size > 10000) {
+      message('The folder exceeds the 10,000-item library limit.', true); return;
     }
     if (selection.files.some(item => !accepted(item.file, input))) {
       message('The folder contains an unsupported file format.', true); return;

@@ -9,7 +9,7 @@ from .archives import approval_item, approve_batch, review_suggestion
 from .library import Library
 
 FOLDER_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
-FOLDER_UPLOAD_ITEMS = 2000
+FOLDER_UPLOAD_ITEMS = 10000
 
 
 def install_library_web(app, settings, repo, reviewer, page, check_csrf):
@@ -54,7 +54,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         library.project_memories(auth)
         roots, tree = library.workspace_folders(auth)
         snapshot = library.snapshot(auth, True)
-        nodes = {row["id"]: dict(row, children=[]) for row in snapshot[:2000]}
+        nodes = {row["id"]: dict(row, children=[]) for row in snapshot[:10000]}
         hierarchy = []
         for node in nodes.values():
             if node["parent_id"] in nodes:
@@ -233,11 +233,11 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         if not 1 <= total_size <= FOLDER_UPLOAD_BYTES:
             raise HTTPException(413, "A folder upload must contain between 1 byte and 5 GB.")
         if not 1 <= file_count <= FOLDER_UPLOAD_ITEMS:
-            raise HTTPException(413, "A folder upload supports up to 2,000 files.")
+            raise HTTPException(413, "A folder upload supports up to 10,000 files.")
         if not 1 <= folder_count <= FOLDER_UPLOAD_ITEMS or file_count + folder_count > FOLDER_UPLOAD_ITEMS:
-            raise HTTPException(413, "The folder and its files exceed the 2,000-item library limit.")
+            raise HTTPException(413, "The folder and its files exceed the 10,000-item library limit.")
         if len(library.snapshot(auth, True)) + file_count + folder_count > FOLDER_UPLOAD_ITEMS:
-            raise HTTPException(413, "The folder would exceed the 2,000-item library limit.")
+            raise HTTPException(413, "The folder would exceed the 10,000-item library limit.")
         usage = library.usage(auth)
         if usage["used"] + total_size > usage["limit"]:
             raise HTTPException(413, "The folder would exceed the shared file storage limit.")

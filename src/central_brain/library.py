@@ -129,9 +129,9 @@ class Library:
     def _capacity(self, c):
         if (
             c.execute("SELECT count(*) AS n FROM central_brain.library_nodes").fetchone()["n"]
-            >= 2000
+            >= 10000
         ):
-            raise HTTPException(413, "The pilot supports up to 2,000 library items.")
+            raise HTTPException(413, "The pilot supports up to 10,000 library items.")
 
     def _audit(self, c, auth, action, node):
         c.execute(
@@ -197,7 +197,7 @@ class Library:
                 "JOIN tree t ON n.parent_id=t.id WHERE n.kind='folder' AND n.status='active' "
                 "AND n.sensitivity=ANY(%s) AND cardinality(t.parts)<32) "
                 "SELECT *,array_to_string(parts,' / ') AS path,cardinality(parts)-1 AS depth "
-                "FROM tree ORDER BY parts LIMIT 2000",
+                "FROM tree ORDER BY parts LIMIT 10000",
                 (auth.principal.sensitivities, auth.principal.sensitivities),
             ).fetchall()
         return roots, rows
@@ -236,7 +236,7 @@ class Library:
                     SELECT v.*,ARRAY[v.name] AS parts,ARRAY[v.id] AS ancestors FROM visible v WHERE parent_id IS NULL
                     UNION ALL SELECT v.*,t.parts||v.name,t.ancestors||v.id FROM visible v JOIN tree t ON v.parent_id=t.id
                     WHERE t.kind='folder' AND cardinality(t.parts)<32 AND NOT v.id=ANY(t.ancestors)
-                ) SELECT * FROM tree ORDER BY parts,id LIMIT 2001""",
+                ) SELECT * FROM tree ORDER BY parts,id LIMIT 10001""",
                 {"levels": auth.principal.sensitivities, "review": review},
             ).fetchall()
         for row in rows:
@@ -286,7 +286,7 @@ class Library:
                                   'path': d['path'][:300] if d['path'] else None} for d in deletions[:20]],
             "deletions_truncated": len(deletions) > 20,
             "deletion_window_days": 30,
-            "truncated": len(nodes) > 2000 or sum(n["kind"] == "folder" for n in active) > 40,
+            "truncated": len(nodes) > 10000 or sum(n["kind"] == "folder" for n in active) > 40,
             "reference_material": True,
         }
 
@@ -484,10 +484,10 @@ class Library:
                          (s.kind='file' AND s.status IN ('active','proposed')) OR
                          (s.kind='memory' AND m.deleted_at IS NULL
                           AND m.status IN ('active','proposed')))
-                ORDER BY s.parts,s.id LIMIT 2001""",
+                ORDER BY s.parts,s.id LIMIT 10001""",
                 {"root": node_id, "levels": auth.principal.sensitivities},
             ).fetchall()
-        if len(rows) > 2000:
+        if len(rows) > 10000:
             raise HTTPException(413, "This folder contains too many items to download.")
         entries = []
         for row in rows:

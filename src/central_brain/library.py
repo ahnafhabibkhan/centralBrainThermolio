@@ -618,7 +618,7 @@ class Library:
         if visibility not in {"private", "workspace"}:
             raise HTTPException(422, "Invalid visibility.")
         if not data or len(data) > self.settings.library_file_bytes:
-            raise HTTPException(413, "File must be between 1 byte and 100 MB.")
+            raise HTTPException(413, "File must be between 1 byte and 200 MB.")
         version_id = uuid4()
         key = f"files/{auth.principal.workspace_id}/{version_id}"
         with nullcontext(connection) if connection else self._upload_transaction(auth, key) as c:

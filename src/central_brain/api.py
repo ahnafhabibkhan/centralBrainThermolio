@@ -46,8 +46,9 @@ def trusted_proxy_hosts() -> tuple[str, ...]:
 
 
 class BodyLimit:
-    def __init__(self, app):
+    def __init__(self, app, file_bytes):
         self.app = app
+        self.file_bytes = file_bytes
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -65,8 +66,8 @@ class BodyLimit:
                         return
                     body = message.get('body', b'')
                     size += len(body)
-                    if size > 101 * 1024 * 1024:
-                        return await JSONResponse({'detail':'Upload exceeds 100 MB plus form overhead.'},413)(scope,receive,send)
+                    if size > self.file_bytes + 1024 * 1024:
+                        return await JSONResponse({'detail':'Upload exceeds 200 MB plus form overhead.'},413)(scope,receive,send)
                     spool.write(body)
                     if not message.get('more_body',False):
                         break
@@ -132,7 +133,7 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
     if settings.environment == "local":
         hosts.append("testserver")
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
-    app.add_middleware(BodyLimit)
+    app.add_middleware(BodyLimit, file_bytes=settings.library_file_bytes)
     buckets = OrderedDict()
 
     @app.middleware("http")

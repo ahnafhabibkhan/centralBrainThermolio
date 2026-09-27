@@ -195,7 +195,9 @@ def test_body_limit_handles_chunked_and_disconnected_uploads_without_delivery():
             return {'type': 'http.request', 'body': b'x' * 1024 * 1024, 'more_body': True}
         async def send(message):
             messages.append(message)
-        await BodyLimit(app)({'type': 'http', 'path': '/archive-original'}, receive, send)
+        await BodyLimit(app, 1024 * 1024)(
+            {'type': 'http', 'path': '/archive-original'}, receive, send,
+        )
         assert not delivered
         if disconnect:
             assert not messages

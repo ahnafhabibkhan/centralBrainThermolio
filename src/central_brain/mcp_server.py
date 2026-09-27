@@ -88,7 +88,7 @@ def build_mcp(settings, repo):
             "the host can programmatically forward exact file bytes to tool arguments. Otherwise show completion_url. "
             "Call get_chat_archive_upload_status before saying an upload is complete or asking for approval. "
             "A blocked transfer is pending work; report its missing files instead of saying there is nothing new to save. "
-            "Transfer files sequentially with code, up to 100 MB each and 100 files per batch, preserving relative paths. "
+            "Transfer files sequentially with code, up to 200 MB each and 100 files per batch, preserving relative paths. "
             "PDF, XLSX and PPTX originals are supported. The text-only propose_file tool is not the binary upload tool. "
             "Use propose_file only for generated Markdown or text notes of at most 20,000 characters. It appends "
             "the source reference and does not preserve exact original bytes. When a finished text document or other "
@@ -249,7 +249,7 @@ def build_mcp(settings, repo):
     def prepare_chat_archive_upload(folder_path: str, summary: str, source_reference: str,
                                     files: list[OriginalManifest], destination_confirmed: bool = False,
                                     summary_filename: str = 'summary.md') -> dict:
-        """Prepare checksum-bound uploads for originals up to 100 MB each, with 100 files per batch.
+        """Prepare checksum-bound uploads for originals up to 200 MB each, with 100 files per batch.
 
         Use this when originals are in your code tool's filesystem. Inventory names, byte sizes, and
         full SHA-256 hashes with code first. Find existing folders and confirm any related destination.
@@ -287,7 +287,7 @@ def build_mcp(settings, repo):
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
     def prepare_original_upload(archive_id: str, file_index: int) -> dict:
-        """Get a private S3 multipart upload for one inventoried original, up to 100 MB.
+        """Get a private S3 multipart upload for one inventoried original, up to 200 MB.
 
         Prefer this for large files when the code environment cannot reach Central Brain's upload host.
         Send the original directly from code to S3 using the returned fields. No binary tool arguments
@@ -360,11 +360,11 @@ def build_mcp(settings, repo):
         not preserve exact original bytes. For a finished text document or a larger text original,
         use propose_chat_archive or prepare_chat_archive_upload. For PDF, XLSX, PPTX, or other
         binary originals, use prepare_chat_archive_upload and its returned transfer path.
-        Originals are supported up to 100 MB each. Do not substitute text extracts for them.
+        Originals are supported up to 200 MB each. Do not substitute text extracts for them.
         Do not include credentials or unnecessary sensitive information.
         """
         if not name.lower().endswith(('.md','.txt')):
-            return {'error':'This tool creates text notes only. For PDF, XLSX, PPTX and other original files, use prepare_chat_archive_upload and its transfer tools. Originals up to 100 MB are supported.'}
+            return {'error':'This tool creates text notes only. For PDF, XLSX, PPTX and other original files, use prepare_chat_archive_upload and its transfer tools. Originals up to 200 MB are supported.'}
         if len(content) > 20000:
             return {'error':'This text file exceeds the 20,000-character propose_file limit. Use propose_chat_archive for a small exact UTF-8 original, or prepare_chat_archive_upload for a checksum-bound original upload.'}
         if not content:

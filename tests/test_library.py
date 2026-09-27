@@ -175,7 +175,7 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
     assert 'data-drop-zone="folder"' in page
     assert 'data-folder-upload' in page
     assert 'name="skip_invalid"' in page
-    assert "Skip empty files and files over 100 MB" in page
+    assert "Skip empty files and files over 200 MB" in page
     assert "10,000 combined files and folders" in page
 
     too_large = client.post(

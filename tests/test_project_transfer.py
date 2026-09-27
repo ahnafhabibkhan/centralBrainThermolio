@@ -106,11 +106,11 @@ def test_project_path_and_size_limits(pilot, library):
     with pytest.raises(HTTPException):
         prepare(pilot, library, {'a.txt': b'x', 'a.txt/child.txt': b'x'})
     with pytest.raises(ValidationError):
-        OriginalManifest(name='large.pdf', size_bytes=104857601, sha256='a' * 64)
-    assert OriginalManifest(name='large.pdf', size_bytes=104857600, sha256='a' * 64)
+        OriginalManifest(name='large.pdf', size_bytes=209715201, sha256='a' * 64)
+    assert OriginalManifest(name='large.pdf', size_bytes=209715200, sha256='a' * 64)
 
 
-def test_maximum_original_over_http_and_storage_failure_retry(pilot, library, monkeypatch):
+def test_large_original_over_http_and_storage_failure_retry(pilot, library, monkeypatch):
     from central_brain.library import ObjectStore
     data = b'x' * (100 * 1024 * 1024)
     prepared = prepare(pilot, library, {'maximum.txt': data})

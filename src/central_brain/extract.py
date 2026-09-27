@@ -28,7 +28,7 @@ def extract(path, extension):
     if extension in {".docx", ".pptx", ".xlsx"}:
         with zipfile.ZipFile(path) as archive:
             if (
-                sum(i.file_size for i in archive.infolist()) > 100 * 1024 * 1024
+                sum(i.file_size for i in archive.infolist()) > 200 * 1024 * 1024
                 or len(archive.infolist()) > 10000
             ):
                 raise ValueError("Expanded document exceeds processing limits.")

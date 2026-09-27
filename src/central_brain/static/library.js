@@ -14,7 +14,7 @@
   const parser = new DOMParser();
   const fileSelections = new WeakMap();
   const folderSelections = new WeakMap();
-  const fileLimit = 100 * 1024 * 1024;
+  const fileLimit = 200 * 1024 * 1024;
   history.replaceState(null, '', '/library');
 
   const folderURL = () => '/library' + (selected ? '?folder=' + encodeURIComponent(selected) : '');
@@ -147,7 +147,7 @@
       message('One or more selected files use an unsupported format.', true); return;
     }
     if (files.some(file => !file.size || file.size > fileLimit)) {
-      message('Every file must contain data and be no larger than 100 MB.', true); return;
+      message('Every file must contain data and be no larger than 200 MB.', true); return;
     }
     busy = true;
     const controls = [...form.querySelectorAll('input, select, button')];
@@ -187,7 +187,7 @@
     if (invalidSizes.length && !form.elements.skip_invalid.checked) {
       const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
       const remaining = invalidSizes.length > 3 ? `, plus ${invalidSizes.length - 3} more` : '';
-      message(`These files are empty or exceed 100 MB: ${names}${remaining}. Select the skip option to upload the remaining files.`, true); return;
+      message(`These files are empty or exceed 200 MB: ${names}${remaining}. Select the skip option to upload the remaining files.`, true); return;
     }
     const files = invalidSizes.length
       ? selection.files.filter(item => item.file.size && item.file.size <= fileLimit)
@@ -350,7 +350,7 @@
     let outcome = '';
     try {
       for (const file of files) {
-        if (file.size > 100 * 1024 * 1024 || !inventory.some(item => !item.ready && item.size === file.size)) {
+        if (file.size > fileLimit || !inventory.some(item => !item.ready && item.size === file.size)) {
           skipped.push(file.name); continue;
         }
         notice.textContent = `Checking ${file.name}. ${completed} uploads confirmed.`;
@@ -624,8 +624,8 @@
       return;
     }
     const file = data.get('file');
-    if (file instanceof File && file.size > 100 * 1024 * 1024) {
-      message('The file exceeds the 100 MB limit.', true);
+    if (file instanceof File && file.size > fileLimit) {
+      message('The file exceeds the 200 MB limit.', true);
       return;
     }
     busy = true;

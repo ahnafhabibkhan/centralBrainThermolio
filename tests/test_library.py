@@ -1,5 +1,6 @@
 import io
 import re
+import tarfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
@@ -154,6 +155,65 @@ def test_web_upload_csrf_preview_and_download(pilot, library):
     url = response.headers["location"]
     assert client.get(url).status_code == 200
     assert client.get(url + "/download").content == b"Boiler test"
+
+
+def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
+    client = pilot.client
+    login = client.get("/login").text
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', login)[1]
+    client.post("/login", data={"token": "owner", "csrf_token": csrf})
+    page = client.get("/library").text
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
+
+    assert page.index('id="approvals"') < page.index('id="library-actions"')
+    assert page.index('id="library-actions"') < page.index('class="knowledge-browser"')
+    assert 'data-drop-zone="file"' in page
+    assert 'data-drop-zone="folder"' in page
+    assert 'data-folder-upload' in page
+
+    too_large = client.post(
+        "/library/folder-upload/start",
+        data={"csrf_token": csrf, "name": "Too large", "total_size": 5 * 1024**3 + 1,
+              "file_count": 1, "folder_count": 1},
+        headers={"Accept": "application/json"},
+    )
+    assert too_large.status_code == 413
+    assert "5 GB" in too_large.json()["detail"]
+
+    started = client.post(
+        "/library/folder-upload/start",
+        data={"csrf_token": csrf, "name": "Project Drop", "total_size": 12,
+              "file_count": 1, "folder_count": 2, "visibility": "private"},
+        headers={"Accept": "application/json"},
+    )
+    assert started.status_code == 200, started.text
+    root = started.json()["id"]
+    nested = client.post(
+        "/library/folders",
+        data={"csrf_token": csrf, "name": "Reports", "parent_id": root,
+              "visibility": "private"},
+        headers={"Accept": "application/json"},
+    )
+    assert nested.status_code == 200, nested.text
+    uploaded = client.post(
+        "/library/upload",
+        data={"csrf_token": csrf, "parent_id": nested.json()["id"],
+              "visibility": "private"},
+        files={"file": ("Status.txt", b"Folder bytes")},
+        headers={"Accept": "application/json"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    folder_page = client.get(f"/library?folder={root}").text
+    assert f'/library/folder/{root}/download' in folder_page
+
+    archive = client.get(f"/library/folder/{root}/download")
+    assert archive.status_code == 200
+    assert "Project%20Drop.tar" in archive.headers["content-disposition"]
+    with tarfile.open(fileobj=io.BytesIO(archive.content), mode="r:") as downloaded:
+        assert downloaded.getnames() == [
+            "Project Drop", "Project Drop/Reports", "Project Drop/Reports/Status.txt",
+        ]
+        assert downloaded.extractfile("Project Drop/Reports/Status.txt").read() == b"Folder bytes"
 
 
 def test_library_navigation_and_markdown_memory_replacements(pilot, library):

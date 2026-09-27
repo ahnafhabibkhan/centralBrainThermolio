@@ -12,6 +12,9 @@
   let detailResource = null;
   let queueFilter = 'ready';
   const parser = new DOMParser();
+  const fileSelections = new WeakMap();
+  const folderSelections = new WeakMap();
+  const fileLimit = 100 * 1024 * 1024;
   history.replaceState(null, '', '/library');
 
   const folderURL = () => '/library' + (selected ? '?folder=' + encodeURIComponent(selected) : '');
@@ -57,6 +60,204 @@
       throw error;
     }
     return result;
+  }
+  function formatBytes(value) {
+    if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+    if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${value} bytes`;
+  }
+  function accepted(file, input) {
+    const extensions = input.accept.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+    return !extensions.length || extensions.some(extension => file.name.toLowerCase().endsWith(extension));
+  }
+  function validSegment(value) {
+    return value && value.length <= 240 && !['.', '..'].includes(value)
+      && !/[\\/\u0000-\u001f]/.test(value);
+  }
+  function folderSelectionFromInput(input) {
+    const files = [...input.files].map(file => ({file, path: file.webkitRelativePath || file.name}));
+    const directories = new Set();
+    files.forEach(({path}) => {
+      const parts = path.split('/').filter(Boolean);
+      for (let end = 1; end < parts.length; end++) directories.add(parts.slice(0, end).join('/'));
+    });
+    return {files, directories};
+  }
+  function showSelection(form, selection, folder = false) {
+    const notice = form.querySelector('[data-drop-selection]');
+    const files = folder ? selection.files.map(item => item.file) : selection;
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    notice.textContent = files.length
+      ? `${folder ? 'Folder selected' : `${files.length} file${files.length === 1 ? '' : 's'} selected`}: ${formatBytes(total)}.`
+      : folder ? 'No folder selected.' : 'No files selected.';
+  }
+  function readEntryFile(entry) {
+    return new Promise((resolve, reject) => entry.file(resolve, reject));
+  }
+  function readDirectory(reader) {
+    return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+  }
+  async function collectEntry(entry, parent, selection) {
+    const path = parent ? `${parent}/${entry.name}` : entry.name;
+    if (entry.isFile) {
+      selection.files.push({file: await readEntryFile(entry), path});
+      return;
+    }
+    if (!entry.isDirectory) return;
+    selection.directories.add(path);
+    const reader = entry.createReader();
+    while (true) {
+      const children = await readDirectory(reader);
+      if (!children.length) break;
+      for (const child of children) await collectEntry(child, path, selection);
+    }
+  }
+  async function droppedFolder(dataTransfer) {
+    const selection = {files: [], directories: new Set()};
+    const entries = [...dataTransfer.items]
+      .map(item => item.webkitGetAsEntry?.()).filter(Boolean);
+    if (entries.length) {
+      for (const entry of entries) await collectEntry(entry, '', selection);
+      return selection;
+    }
+    const inputLike = [...dataTransfer.files]
+      .map(file => ({file, path: file.webkitRelativePath || file.name}));
+    selection.files = inputLike;
+    inputLike.forEach(({path}) => {
+      const parts = path.split('/').filter(Boolean);
+      for (let end = 1; end < parts.length; end++) selection.directories.add(parts.slice(0, end).join('/'));
+    });
+    return selection;
+  }
+  async function uploadFiles(form) {
+    if (busy) return;
+    const input = form.querySelector('input[type="file"]');
+    const files = fileSelections.get(form) || [...input.files];
+    if (!files.length) { message('Choose or drop at least one file.', true); return; }
+    if (files.some(file => !accepted(file, input))) {
+      message('One or more selected files use an unsupported format.', true); return;
+    }
+    if (files.some(file => !file.size || file.size > fileLimit)) {
+      message('Every file must contain data and be no larger than 100 MB.', true); return;
+    }
+    busy = true;
+    const controls = [...form.querySelectorAll('input, select, button')];
+    controls.forEach(control => { control.disabled = true; });
+    const progress = form.querySelector('progress');
+    progress.max = files.length; progress.value = 0; progress.hidden = false;
+    let completed = 0;
+    try {
+      for (const file of files) {
+        message(`Uploading ${file.name}. ${completed} of ${files.length} files complete.`);
+        const data = new FormData();
+        data.set('csrf_token', form.elements.csrf_token.value);
+        data.set('parent_id', form.elements.parent_id.value);
+        data.set('visibility', form.elements.visibility.value);
+        data.set('file', file, file.name);
+        await postJSON('/library/upload', data);
+        completed++; progress.value = completed;
+      }
+      dirty = false;
+      fileSelections.delete(form);
+      await refresh(true);
+      message(`${completed} files uploaded. Workspace context has been updated.`);
+    } catch (error) {
+      message(`${completed} uploads completed. ${error.message} Completed files are preserved.`, true);
+      try { await refresh(false); } catch (_) {}
+    } finally {
+      busy = false;
+      controls.forEach(control => { control.disabled = false; });
+    }
+  }
+  async function uploadFolder(form) {
+    if (busy) return;
+    const input = form.querySelector('input[type="file"]');
+    const selection = folderSelections.get(form) || folderSelectionFromInput(input);
+    if (!selection.files.length) { message('Choose or drop a folder containing files.', true); return; }
+    const paths = selection.files.map(item => item.path.split('/').filter(Boolean));
+    const roots = new Set(paths.map(parts => parts[0]));
+    if (roots.size !== 1 || paths.some(parts => parts.length < 2 || parts.some(part => !validSegment(part)))) {
+      message('Choose one folder with valid file and folder names.', true); return;
+    }
+    const rootName = [...roots][0];
+    selection.directories.add(rootName);
+    const total = selection.files.reduce((sum, item) => sum + item.file.size, 0);
+    const limit = Number(document.getElementById('library-actions').dataset.folderLimit);
+    if (!total || total > limit) {
+      message(`The folder must contain data and be no larger than ${formatBytes(limit)}.`, true); return;
+    }
+    if (selection.files.length + selection.directories.size > 2000) {
+      message('The folder exceeds the 2,000-item library limit.', true); return;
+    }
+    if (selection.files.some(item => !accepted(item.file, input))) {
+      message('The folder contains an unsupported file format.', true); return;
+    }
+    if (selection.files.some(item => !item.file.size || item.file.size > fileLimit)) {
+      message('Every file must contain data and be no larger than 100 MB.', true); return;
+    }
+    busy = true;
+    const controls = [...form.querySelectorAll('input, select, button')];
+    controls.forEach(control => { control.disabled = true; });
+    const progress = form.querySelector('progress');
+    const directories = [...selection.directories].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+    progress.max = directories.length + selection.files.length; progress.value = 0; progress.hidden = false;
+    let completedFiles = 0;
+    let completedFolders = 0;
+    let rootId = '';
+    try {
+      const start = new FormData();
+      start.set('csrf_token', form.elements.csrf_token.value);
+      start.set('parent_id', form.elements.parent_id.value);
+      start.set('visibility', form.elements.visibility.value);
+      start.set('name', rootName);
+      start.set('total_size', String(total));
+      start.set('file_count', String(selection.files.length));
+      start.set('folder_count', String(directories.length));
+      message(`Preparing ${rootName}.`);
+      const root = await postJSON('/library/folder-upload/start', start);
+      rootId = root.id;
+      const folderIds = new Map([[rootName, rootId]]);
+      completedFolders = 1; progress.value = 1;
+      for (const path of directories.slice(1)) {
+        const parts = path.split('/');
+        const parentPath = parts.slice(0, -1).join('/');
+        const data = new FormData();
+        data.set('csrf_token', form.elements.csrf_token.value);
+        data.set('parent_id', folderIds.get(parentPath));
+        data.set('visibility', form.elements.visibility.value);
+        data.set('name', parts.at(-1));
+        message(`Creating ${path}.`);
+        const created = await postJSON('/library/folders', data);
+        folderIds.set(path, created.id);
+        completedFolders++; progress.value++;
+      }
+      for (const item of selection.files) {
+        const parts = item.path.split('/');
+        const parentPath = parts.slice(0, -1).join('/');
+        const data = new FormData();
+        data.set('csrf_token', form.elements.csrf_token.value);
+        data.set('parent_id', folderIds.get(parentPath));
+        data.set('visibility', form.elements.visibility.value);
+        data.set('file', item.file, parts.at(-1));
+        message(`Uploading ${item.path}. ${completedFiles} of ${selection.files.length} files complete.`);
+        await postJSON('/library/upload', data);
+        completedFiles++; progress.value++;
+      }
+      dirty = false;
+      folderSelections.delete(form);
+      selected = rootId;
+      await refresh(true);
+      message(`${rootName} uploaded with ${completedFiles} files and ${completedFolders} folders.`);
+    } catch (error) {
+      dirty = false;
+      if (rootId) selected = rootId;
+      try { await refresh(true); } catch (_) {}
+      message(`${completedFiles} files and ${completedFolders} folders completed. ${error.message} Completed items are preserved.`, true);
+    } finally {
+      busy = false;
+      controls.forEach(control => { control.disabled = false; });
+    }
   }
   async function approveQueue(form) {
     if (busy) return;
@@ -228,6 +429,7 @@
     const open = new Set([...document.querySelectorAll('#folder-tree .tree-branch.expanded')].map(d => d.dataset.treeId));
     const focusedToggle = document.activeElement?.closest('.tree-toggle')?.closest('.tree-branch')?.dataset.treeId;
     for (const id of ['approvals', 'context-strip', 'folder-tree']) replaceRegion(id, doc);
+    if (!dirty) replaceRegion('library-actions', doc);
     filterQueue();
     document.querySelectorAll('#folder-tree .tree-branch').forEach(d => expandBranch(d, open.has(d.dataset.treeId)));
     if (focusedToggle) document.querySelector(`#folder-tree [data-tree-id="${CSS.escape(focusedToggle)}"] .tree-toggle`)?.focus({preventScroll: true});
@@ -248,6 +450,7 @@
     if (request !== folderRequest) return;
     selected = id;
     dirty = false;
+    replaceRegion('library-actions', doc);
     replaceRegion('folder-content', doc);
     selectedTree(true);
     if (dialog.open) dialog.close();
@@ -286,10 +489,54 @@
   }
   document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
   document.addEventListener('input', event => {
-    if (event.target.closest('#folder-content form')) dirty = true;
+    if (event.target.closest('#folder-content form,#library-actions form')) dirty = true;
   });
   document.addEventListener('change', event => {
-    if (event.target.closest('#folder-content form')) dirty = true;
+    const fileForm = event.target.closest('form[data-file-upload]');
+    const folderForm = event.target.closest('form[data-folder-upload]');
+    if (fileForm && event.target.matches('input[type="file"]')) {
+      fileSelections.delete(fileForm);
+      showSelection(fileForm, [...event.target.files]);
+    }
+    if (folderForm && event.target.matches('input[type="file"]')) {
+      const selection = folderSelectionFromInput(event.target);
+      folderSelections.set(folderForm, selection);
+      showSelection(folderForm, selection, true);
+    }
+    if (event.target.closest('#folder-content form,#library-actions form')) dirty = true;
+  });
+  document.addEventListener('dragover', event => {
+    const zone = event.target.closest('[data-drop-zone]');
+    if (!zone) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    zone.classList.add('drop-active');
+  });
+  document.addEventListener('dragleave', event => {
+    const zone = event.target.closest('[data-drop-zone]');
+    if (zone && !zone.contains(event.relatedTarget)) zone.classList.remove('drop-active');
+  });
+  document.addEventListener('drop', async event => {
+    const zone = event.target.closest('[data-drop-zone]');
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.remove('drop-active');
+    const form = zone.closest('form');
+    try {
+      if (zone.dataset.dropZone === 'folder') {
+        const selection = await droppedFolder(event.dataTransfer);
+        folderSelections.set(form, selection);
+        showSelection(form, selection, true);
+      } else {
+        const files = [...event.dataTransfer.files];
+        fileSelections.set(form, files);
+        showSelection(form, files);
+      }
+      dirty = true;
+      message('Selection ready. Review the access setting, then start the upload.');
+    } catch (_) {
+      message('That dropped folder could not be read. Use Choose folder instead.', true);
+    }
   });
   document.addEventListener('click', event => {
     const queueToggle = event.target.closest('[data-queue-filter]');
@@ -331,6 +578,14 @@
     if (formURL.pathname === '/logout') return;
     event.preventDefault();
     if (busy) return;
+    if (form.hasAttribute('data-file-upload')) {
+      await uploadFiles(form);
+      return;
+    }
+    if (form.hasAttribute('data-folder-upload')) {
+      await uploadFolder(form);
+      return;
+    }
     if (form.hasAttribute('data-queue-batch')) {
       await uploadQueue(form);
       return;

@@ -2,12 +2,14 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
+from .archives import approval_item, approve_batch, review_suggestion
 from .library import Library
-from .archives import ArchiveFile, approval_item, approve_batch, review_suggestion
+
+FOLDER_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
+FOLDER_UPLOAD_ITEMS = 2000
 
 
 def install_library_web(app, settings, repo, reviewer, page, check_csrf):
@@ -117,6 +119,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                                 for item in archive_files if not item["ready"]],
             pending_files=pending_files,
             approval_items=approval_items,
+            folder_upload_limit=FOLDER_UPLOAD_BYTES,
         )
 
     @app.post('/library/approve-all', include_in_schema=False)
@@ -214,16 +217,52 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             return JSONResponse(jsonable_encoder(result), headers={'Cache-Control': 'no-store'})
         return RedirectResponse('/library#approvals', 303)
 
+    @app.post("/library/folder-upload/start", include_in_schema=False)
+    def folder_upload_start(
+        request: Request,
+        name: str = Form(...),
+        total_size: int = Form(...),
+        file_count: int = Form(...),
+        folder_count: int = Form(...),
+        parent_id: str = Form(""),
+        visibility: str = Form("workspace"),
+        csrf_token: str = Form(...),
+    ):
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        if not 1 <= total_size <= FOLDER_UPLOAD_BYTES:
+            raise HTTPException(413, "A folder upload must contain between 1 byte and 5 GB.")
+        if not 1 <= file_count <= FOLDER_UPLOAD_ITEMS:
+            raise HTTPException(413, "A folder upload supports up to 2,000 files.")
+        if not 1 <= folder_count <= FOLDER_UPLOAD_ITEMS or file_count + folder_count > FOLDER_UPLOAD_ITEMS:
+            raise HTTPException(413, "The folder and its files exceed the 2,000-item library limit.")
+        if len(library.snapshot(auth, True)) + file_count + folder_count > FOLDER_UPLOAD_ITEMS:
+            raise HTTPException(413, "The folder would exceed the 2,000-item library limit.")
+        usage = library.usage(auth)
+        if usage["used"] + total_size > usage["limit"]:
+            raise HTTPException(413, "The folder would exceed the shared file storage limit.")
+        node = library.folder(
+            auth, name, UUID(parent_id) if parent_id else None, visibility=visibility,
+        )
+        return JSONResponse({"id": str(node), "path": library.path(auth, node)},
+                            headers={"Cache-Control": "no-store"})
+
     @app.post("/library/folders", include_in_schema=False)
     def folder_create(
         request: Request,
         name: str = Form(...),
         parent_id: str = Form(""),
+        visibility: str = Form("workspace"),
         csrf_token: str = Form(...),
     ):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
-        node = library.folder(auth, name, UUID(parent_id) if parent_id else None)
+        node = library.folder(
+            auth, name, UUID(parent_id) if parent_id else None, visibility=visibility,
+        )
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"id": str(node), "path": library.path(auth, node)},
+                                headers={"Cache-Control": "no-store"})
         return RedirectResponse(f"/library?folder={node}", 303)
 
     @app.post("/library/upload", include_in_schema=False)
@@ -252,6 +291,10 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                     source=Source(kind="document", reference=file.filename),
                 ))
                 await run_in_threadpool(library.move, auth, receipt.memory_id, f"Memory-{receipt.memory_id}.md", parent)
+                if "application/json" in request.headers.get("accept", ""):
+                    return JSONResponse({"id": str(receipt.memory_id),
+                                         "review_url": f"/review/{receipt.memory_id}"},
+                                        headers={"Cache-Control": "no-store"})
                 return RedirectResponse(f"/review/{receipt.memory_id}", 303)
             result = await run_in_threadpool(
                 library.upload,
@@ -263,6 +306,9 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                 False,
                 str(form.get("visibility", "workspace")),
             )
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"id": str(result), "url": f"/library/file/{result}"},
+                                headers={"Cache-Control": "no-store"})
         return RedirectResponse(f"/library/file/{result}", 303)
 
     @app.get("/library/file/{node_id}", include_in_schema=False)
@@ -300,6 +346,19 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             media_type="application/octet-stream",
             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe=""),
                      "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/library/folder/{node_id}/download", include_in_schema=False)
+    def download_folder(request: Request, node_id: UUID):
+        from .folder_archive import tar_stream
+
+        name, entries = library.folder_export(reviewer(request), node_id)
+        return StreamingResponse(
+            tar_stream(library.store, entries),
+            media_type="application/x-tar",
+            headers={"Content-Disposition": "attachment; filename*=UTF-8''" +
+                     quote(name + ".tar", safe=""),
+                     "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
         )
 
     @app.get('/library/file/{node_id}/delete', include_in_schema=False)

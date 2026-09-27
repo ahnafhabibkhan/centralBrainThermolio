@@ -425,9 +425,11 @@ class Library:
         except ForeignKeyViolation:
             raise HTTPException(409, 'This folder contains items that cannot be deleted with your access. Nothing was deleted.') from None
 
-    def folder(self, auth, name, parent=None, connection=None):
+    def folder(self, auth, name, parent=None, connection=None, visibility="workspace"):
         auth.require("reviewer")
         name = filename(name)
+        if visibility not in {"private", "workspace"}:
+            raise HTTPException(422, "Invalid visibility.")
         from contextlib import nullcontext
 
         with nullcontext(connection) if connection else self.repo._connection(auth) as c:
@@ -444,11 +446,67 @@ class Library:
             self._capacity(c)
             node = uuid4()
             c.execute(
-                "INSERT INTO central_brain.library_nodes(id,workspace_id,created_by,parent_id,name,kind) VALUES(%s,%s,%s,%s,%s,'folder')",
-                (node, auth.principal.workspace_id, auth.principal.actor_id, parent, name),
+                "INSERT INTO central_brain.library_nodes"
+                "(id,workspace_id,created_by,parent_id,name,kind,visibility) "
+                "VALUES(%s,%s,%s,%s,%s,'folder',%s)",
+                (node, auth.principal.workspace_id, auth.principal.actor_id,
+                 parent, name, visibility),
             )
             self._audit(c, auth, "folder.create", node)
         return node
+
+    def folder_export(self, auth, node_id):
+        """Return a bounded, access-filtered folder tree for a streaming archive."""
+        auth.require("reviewer")
+        with self.repo._connection(auth) as c:
+            root = self._get(c, auth, node_id, True)
+            if root["kind"] != "folder" or root["status"] not in {"active", "proposed"}:
+                raise HTTPException(422, "Choose a folder to download.")
+            rows = c.execute(
+                """WITH RECURSIVE subtree AS (
+                    SELECT n.*,ARRAY[n.name] AS parts
+                    FROM central_brain.library_nodes n WHERE n.id=%(root)s
+                    UNION ALL
+                    SELECT n.*,s.parts||n.name
+                    FROM central_brain.library_nodes n JOIN subtree s ON n.parent_id=s.id
+                    WHERE cardinality(s.parts)<32
+                )
+                SELECT s.*,v.object_key,v.size,m.content,m.source,m.status AS memory_status,
+                    m.deleted_at
+                FROM subtree s
+                LEFT JOIN LATERAL (
+                    SELECT object_key,size FROM central_brain.library_versions
+                    WHERE node_id=s.id ORDER BY version DESC LIMIT 1
+                ) v ON true
+                LEFT JOIN central_brain.memories m ON m.id=s.memory_id
+                WHERE s.sensitivity=ANY(%(levels)s)
+                    AND ((s.kind='folder' AND s.status IN ('active','proposed')) OR
+                         (s.kind='file' AND s.status IN ('active','proposed')) OR
+                         (s.kind='memory' AND m.deleted_at IS NULL
+                          AND m.status IN ('active','proposed')))
+                ORDER BY s.parts,s.id LIMIT 2001""",
+                {"root": node_id, "levels": auth.principal.sensitivities},
+            ).fetchall()
+        if len(rows) > 2000:
+            raise HTTPException(413, "This folder contains too many items to download.")
+        entries = []
+        for row in rows:
+            path = "/".join(row["parts"])
+            if row["kind"] == "folder":
+                entries.append({"path": path + "/", "kind": "folder",
+                                "created_at": row["created_at"]})
+            elif row["kind"] == "memory":
+                reference = str((row["source"] or {}).get("reference", ""))
+                data = (row["content"] + "\n\nSource: " + reference + "\n").encode()
+                entries.append({"path": path, "kind": "memory", "size": len(data),
+                                "data": data, "created_at": row["created_at"]})
+            else:
+                if not row["object_key"]:
+                    raise HTTPException(409, f"{row['name']} has no downloadable version.")
+                entries.append({"path": path, "kind": "file", "size": row["size"],
+                                "object_key": row["object_key"],
+                                "created_at": row["created_at"]})
+        return root["name"], entries
 
     def move(self, auth, node_id, name, parent=None, connection=None):
         auth.require("reviewer")

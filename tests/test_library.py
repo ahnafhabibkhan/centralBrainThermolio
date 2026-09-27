@@ -84,6 +84,10 @@ def test_limits_cycles_and_quota_race(pilot, library):
         library.upload(auth, "../escape.txt", b"x")
     with pytest.raises(HTTPException):
         library.upload(auth, "macro.xlsm", b"x")
+    empty = library.upload(auth, ".DS_Store", b"")
+    name, stream = library.download(auth, empty)
+    with stream:
+        assert name == ".DS_Store" and stream.read() == b""
     pilot.settings.library_file_bytes = 10
     with pytest.raises(HTTPException):
         library.upload(auth, "big.txt", b"x" * 11)
@@ -175,7 +179,8 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
     assert 'data-drop-zone="folder"' in page
     assert 'data-folder-upload' in page
     assert 'name="skip_invalid"' in page
-    assert "Skip empty files and files over 200 MB" in page
+    assert "Skip files over 500 MB" in page
+    assert 'id="folder-files" type="file" webkitdirectory' in page
     assert "10,000 combined files and folders" in page
 
     too_large = client.post(
@@ -204,21 +209,37 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
     )
     assert started.status_code == 200, started.text
     root = started.json()["id"]
+    resumed = client.post(
+        "/library/folder-upload/start",
+        data={"csrf_token": csrf, "name": "Project Drop", "total_size": 12,
+              "file_count": 1, "folder_count": 2, "visibility": "private",
+              "resume": "true"},
+        headers={"Accept": "application/json"},
+    )
+    assert resumed.status_code == 200 and resumed.json()["id"] == root
     nested = client.post(
         "/library/folders",
         data={"csrf_token": csrf, "name": "Reports", "parent_id": root,
-              "visibility": "private"},
+              "visibility": "private", "resume": "true"},
         headers={"Accept": "application/json"},
     )
     assert nested.status_code == 200, nested.text
     uploaded = client.post(
         "/library/upload",
         data={"csrf_token": csrf, "parent_id": nested.json()["id"],
-              "visibility": "private"},
+              "visibility": "private", "resume": "true"},
         files={"file": ("Status.txt", b"Folder bytes")},
         headers={"Accept": "application/json"},
     )
     assert uploaded.status_code == 200, uploaded.text
+    duplicate = client.post(
+        "/library/upload",
+        data={"csrf_token": csrf, "parent_id": nested.json()["id"],
+              "visibility": "private", "resume": "true"},
+        files={"file": ("Status.txt", b"Folder bytes")},
+        headers={"Accept": "application/json"},
+    )
+    assert duplicate.status_code == 200 and duplicate.json()["id"] == uploaded.json()["id"]
     folder_page = client.get(f"/library?folder={root}").text
     assert f'/library/folder/{root}/download' in folder_page
 

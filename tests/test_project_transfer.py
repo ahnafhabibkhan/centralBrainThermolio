@@ -106,8 +106,8 @@ def test_project_path_and_size_limits(pilot, library):
     with pytest.raises(HTTPException):
         prepare(pilot, library, {'a.txt': b'x', 'a.txt/child.txt': b'x'})
     with pytest.raises(ValidationError):
-        OriginalManifest(name='large.pdf', size_bytes=209715201, sha256='a' * 64)
-    assert OriginalManifest(name='large.pdf', size_bytes=209715200, sha256='a' * 64)
+        OriginalManifest(name='large.pdf', size_bytes=524288001, sha256='a' * 64)
+    assert OriginalManifest(name='large.pdf', size_bytes=524288000, sha256='a' * 64)
 
 
 def test_large_original_over_http_and_storage_failure_retry(pilot, library, monkeypatch):

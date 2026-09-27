@@ -429,7 +429,9 @@ class Library:
         except ForeignKeyViolation:
             raise HTTPException(409, 'This folder contains items that cannot be deleted with your access. Nothing was deleted.') from None
 
-    def folder(self, auth, name, parent=None, connection=None, visibility="workspace"):
+    def folder(
+        self, auth, name, parent=None, connection=None, visibility="workspace", reuse=False,
+    ):
         auth.require("reviewer")
         name = filename(name)
         if visibility not in {"private", "workspace"}:
@@ -439,6 +441,16 @@ class Library:
         with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             self._lock(c, auth)
             self._parent(c, auth, parent)
+            existing = c.execute(
+                "SELECT id,kind,created_by FROM central_brain.library_nodes "
+                "WHERE parent_id IS NOT DISTINCT FROM %s AND lower(name)=lower(%s) "
+                "AND status<>'rejected' LIMIT 1",
+                (parent, name),
+            ).fetchone()
+            if existing and reuse:
+                if existing["kind"] == "folder" and existing["created_by"] == auth.principal.actor_id:
+                    return existing["id"]
+                raise HTTPException(409, "That existing item cannot be reused for this upload.")
             current = parent
             for _ in range(30):
                 if not current:
@@ -604,26 +616,43 @@ class Library:
 
     def upload(
         self, auth, name, data, parent=None, node_id=None, proposed=False, visibility="workspace",
-        connection=None, stored_keys=None,
+        connection=None, stored_keys=None, reuse=False,
     ):
         auth.require("writer" if proposed else "reviewer")
         from .project_transfer import reserved_bytes
         name = filename(name)
-        if Path(name).suffix.lower() not in EXTENSIONS:
+        if Path(name).suffix.lower() not in EXTENSIONS and name.lower() != ".ds_store":
             raise HTTPException(
                 422,
                 "Supported formats: PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, SVG, PNG, "
-                "JPG, JPEG, WEBP, HEIC, ZIP, MP4, EML, DWG, DXF, URL, DB.",
+                "JPG, JPEG, WEBP, HEIC, ZIP, MP4, EML, DWG, DXF, URL, DB, and .DS_Store.",
             )
         if visibility not in {"private", "workspace"}:
             raise HTTPException(422, "Invalid visibility.")
-        if not data or len(data) > self.settings.library_file_bytes:
-            raise HTTPException(413, "File must be between 1 byte and 200 MB.")
+        if len(data) > self.settings.library_file_bytes:
+            raise HTTPException(413, "File must be no larger than 500 MB.")
         version_id = uuid4()
         key = f"files/{auth.principal.workspace_id}/{version_id}"
+        digest = hashlib.sha256(data).hexdigest()
         with nullcontext(connection) if connection else self._upload_transaction(auth, key) as c:
             self._lock(c, auth)
             self._parent(c, auth, parent)
+            if reuse and not node_id:
+                existing = c.execute(
+                    "SELECT n.id,n.kind,n.created_by,v.size,v.sha256 "
+                    "FROM central_brain.library_nodes n LEFT JOIN LATERAL ("
+                    "SELECT size,sha256 FROM central_brain.library_versions WHERE node_id=n.id "
+                    "ORDER BY version DESC LIMIT 1) v ON true "
+                    "WHERE n.parent_id IS NOT DISTINCT FROM %s AND lower(n.name)=lower(%s) "
+                    "AND n.status<>'rejected' LIMIT 1",
+                    (parent, name),
+                ).fetchone()
+                if existing:
+                    if (existing["kind"] == "file"
+                            and existing["created_by"] == auth.principal.actor_id
+                            and existing["size"] == len(data) and existing["sha256"] == digest):
+                        return existing["id"]
+                    raise HTTPException(409, "An existing item at this path has different content.")
             used = c.execute(
                 "SELECT coalesce(sum(size),0) AS used FROM central_brain.library_versions"
             ).fetchone()["used"]
@@ -668,7 +697,7 @@ class Library:
                     version,
                     key,
                     len(data),
-                    hashlib.sha256(data).hexdigest(),
+                    digest,
                 ),
             )
             # Store while the quota reservation transaction is locked. Failed storage rolls it back.

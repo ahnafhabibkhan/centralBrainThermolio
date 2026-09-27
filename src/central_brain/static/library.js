@@ -14,7 +14,7 @@
   const parser = new DOMParser();
   const fileSelections = new WeakMap();
   const folderSelections = new WeakMap();
-  const fileLimit = 200 * 1024 * 1024;
+  const fileLimit = 500 * 1024 * 1024;
   history.replaceState(null, '', '/library');
 
   const folderURL = () => '/library' + (selected ? '?folder=' + encodeURIComponent(selected) : '');
@@ -84,19 +84,15 @@
     return value && value.length <= 240 && !['.', '..'].includes(value)
       && !/[\\/\u0000-\u001f]/.test(value);
   }
-  function systemFile(path) {
-    const name = path.split('/').at(-1).toLowerCase();
-    return name === '.ds_store' || name === 'thumbs.db' || name === 'desktop.ini';
-  }
   function folderSelectionFromInput(input) {
     const selected = [...input.files].map(file => ({file, path: file.webkitRelativePath || file.name}));
-    const files = selected.filter(item => !systemFile(item.path));
+    const files = selected.sort((a, b) => a.path.localeCompare(b.path));
     const directories = new Set();
     files.forEach(({path}) => {
       const parts = path.split('/').filter(Boolean);
       for (let end = 1; end < parts.length; end++) directories.add(parts.slice(0, end).join('/'));
     });
-    return {files, directories, ignored: selected.length - files.length};
+    return {files, directories};
   }
   function showSelection(form, selection, folder = false) {
     const notice = form.querySelector('[data-drop-selection]');
@@ -105,7 +101,6 @@
     notice.textContent = files.length
       ? `${folder ? 'Folder selected' : `${files.length} file${files.length === 1 ? '' : 's'} selected`}: ${formatBytes(total)}.`
       : folder ? 'No folder selected.' : 'No files selected.';
-    if (folder && selection.ignored) notice.textContent += ` ${selection.ignored} system metadata files will be ignored.`;
   }
   function readEntryFile(entry) {
     return new Promise((resolve, reject) => entry.file(resolve, reject));
@@ -116,7 +111,6 @@
   async function collectEntry(entry, parent, selection) {
     const path = parent ? `${parent}/${entry.name}` : entry.name;
     if (entry.isFile) {
-      if (systemFile(path)) { selection.ignored++; return; }
       selection.files.push({file: await readEntryFile(entry), path});
       return;
     }
@@ -130,17 +124,17 @@
     }
   }
   async function droppedFolder(dataTransfer) {
-    const selection = {files: [], directories: new Set(), ignored: 0};
+    const selection = {files: [], directories: new Set()};
     const entries = [...dataTransfer.items]
       .map(item => item.webkitGetAsEntry?.()).filter(Boolean);
     if (entries.length) {
       for (const entry of entries) await collectEntry(entry, '', selection);
+      selection.files.sort((a, b) => a.path.localeCompare(b.path));
       return selection;
     }
     const inputLike = [...dataTransfer.files]
       .map(file => ({file, path: file.webkitRelativePath || file.name}));
-    selection.files = inputLike.filter(item => !systemFile(item.path));
-    selection.ignored = inputLike.length - selection.files.length;
+    selection.files = inputLike.sort((a, b) => a.path.localeCompare(b.path));
     selection.files.forEach(({path}) => {
       const parts = path.split('/').filter(Boolean);
       for (let end = 1; end < parts.length; end++) selection.directories.add(parts.slice(0, end).join('/'));
@@ -155,8 +149,8 @@
     if (files.some(file => !accepted(file, input))) {
       message('One or more selected files use an unsupported format.', true); return;
     }
-    if (files.some(file => !file.size || file.size > fileLimit)) {
-      message('Every file must contain data and be no larger than 200 MB.', true); return;
+    if (files.some(file => file.size > fileLimit)) {
+      message('Every file must be no larger than 500 MB.', true); return;
     }
     busy = true;
     const controls = [...form.querySelectorAll('input, select, button')];
@@ -192,14 +186,14 @@
     const input = form.querySelector('input[type="file"]');
     const selection = folderSelections.get(form) || folderSelectionFromInput(input);
     if (!selection.files.length) { message('Choose or drop a folder containing files.', true); return; }
-    const invalidSizes = selection.files.filter(item => !item.file.size || item.file.size > fileLimit);
+    const invalidSizes = selection.files.filter(item => item.file.size > fileLimit);
     if (invalidSizes.length && !form.elements.skip_invalid.checked) {
       const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
       const remaining = invalidSizes.length > 3 ? `, plus ${invalidSizes.length - 3} more` : '';
-      message(`These files are empty or exceed 200 MB: ${names}${remaining}. Select the skip option to upload the remaining files.`, true); return;
+      message(`These files exceed 500 MB: ${names}${remaining}. Select the skip option to upload the remaining files.`, true); return;
     }
     const files = invalidSizes.length
-      ? selection.files.filter(item => item.file.size && item.file.size <= fileLimit)
+      ? selection.files.filter(item => item.file.size <= fileLimit)
       : selection.files;
     if (!files.length) { message('No uploadable files remain after applying the skip option.', true); return; }
     const paths = files.map(item => item.path.split('/').filter(Boolean));
@@ -234,6 +228,7 @@
       start.set('csrf_token', form.elements.csrf_token.value);
       start.set('parent_id', form.elements.parent_id.value);
       start.set('visibility', form.elements.visibility.value);
+      start.set('resume', 'true');
       start.set('name', rootName);
       start.set('total_size', String(total));
       start.set('file_count', String(files.length));
@@ -250,6 +245,7 @@
         data.set('csrf_token', form.elements.csrf_token.value);
         data.set('parent_id', folderIds.get(parentPath));
         data.set('visibility', form.elements.visibility.value);
+        data.set('resume', 'true');
         data.set('name', parts.at(-1));
         message(`Creating ${path}.`);
         const created = await postJSON('/library/folders', data, {retryRateLimit: true});
@@ -263,6 +259,7 @@
         data.set('csrf_token', form.elements.csrf_token.value);
         data.set('parent_id', folderIds.get(parentPath));
         data.set('visibility', form.elements.visibility.value);
+        data.set('resume', 'true');
         data.set('file', item.file, parts.at(-1));
         message(`Uploading ${item.path}. ${completedFiles} of ${files.length} files complete.`);
         await postJSON('/library/upload', data, {retryRateLimit: true});
@@ -272,7 +269,7 @@
       folderSelections.delete(form);
       selected = rootId;
       await refresh(true);
-      const skipped = invalidSizes.length ? ` ${invalidSizes.length} empty or oversized files were skipped.` : '';
+      const skipped = invalidSizes.length ? ` ${invalidSizes.length} oversized files were skipped.` : '';
       message(`${rootName} uploaded with ${completedFiles} files and ${completedFolders} folders.${skipped}`);
     } catch (error) {
       dirty = false;
@@ -634,7 +631,7 @@
     }
     const file = data.get('file');
     if (file instanceof File && file.size > fileLimit) {
-      message('The file exceeds the 200 MB limit.', true);
+      message('The file exceeds the 500 MB limit.', true);
       return;
     }
     busy = true;

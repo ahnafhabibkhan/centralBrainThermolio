@@ -209,7 +209,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         try:
             data = await file.read(settings.library_file_bytes + 1)
             if len(data) > settings.library_file_bytes:
-                raise HTTPException(413, 'The file exceeds the 200 MB limit.')
+                raise HTTPException(413, 'The file exceeds the 500 MB limit.')
             result = await run_in_threadpool(store_original, library, auth, suggestion_id, index, data)
         finally:
             await file.close()
@@ -226,6 +226,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         folder_count: int = Form(...),
         parent_id: str = Form(""),
         visibility: str = Form("workspace"),
+        resume: bool = Form(False),
         csrf_token: str = Form(...),
     ):
         auth = reviewer(request)
@@ -243,6 +244,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             raise HTTPException(413, "The folder would exceed the shared file storage limit.")
         node = library.folder(
             auth, name, UUID(parent_id) if parent_id else None, visibility=visibility,
+            reuse=resume,
         )
         return JSONResponse({"id": str(node), "path": library.path(auth, node)},
                             headers={"Cache-Control": "no-store"})
@@ -253,12 +255,14 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         name: str = Form(...),
         parent_id: str = Form(""),
         visibility: str = Form("workspace"),
+        resume: bool = Form(False),
         csrf_token: str = Form(...),
     ):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
         node = library.folder(
             auth, name, UUID(parent_id) if parent_id else None, visibility=visibility,
+            reuse=resume,
         )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"id": str(node), "path": library.path(auth, node)},
@@ -270,7 +274,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         from starlette.concurrency import run_in_threadpool
 
         auth = await run_in_threadpool(reviewer, request)
-        async with request.form(max_files=1, max_fields=5, max_part_size=8192) as form:
+        async with request.form(max_files=1, max_fields=6, max_part_size=8192) as form:
             check_csrf(request, str(form.get("csrf_token", "")))
             file = form.get("file")
             if not file or not hasattr(file, "read"):
@@ -305,6 +309,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                 node,
                 False,
                 str(form.get("visibility", "workspace")),
+                reuse=str(form.get("resume", "")).lower() in {"1", "true", "yes"},
             )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"id": str(result), "url": f"/library/file/{result}"},

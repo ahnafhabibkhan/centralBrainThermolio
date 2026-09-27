@@ -147,6 +147,13 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
         bucket_name = "auth" if request.url.path in AUTH_RATE_LIMIT_PATHS else "general"
         auth_marker = None
         request_limit = settings.requests_per_minute
+        if request.method == "POST" and request.url.path in {
+            "/library/folder-upload/start", "/library/folders", "/library/upload",
+        }:
+            # Folder uploads send one bounded request per folder and file. Keep those
+            # requests isolated so they neither consume nor inherit the page-traffic bucket.
+            bucket_name = "library-upload"
+            request_limit = max(request_limit, 600)
         if bucket_name == "auth":
             # Leave enough room for the redirects and one recovery attempt in an OAuth flow.
             request_limit = max(request_limit, MIN_AUTH_REQUESTS_PER_MINUTE)

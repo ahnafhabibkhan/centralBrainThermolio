@@ -34,32 +34,41 @@
     const recovery = panel.querySelector('[data-batch-recovery]');
     if (recovery) recovery.hidden = queueFilter === 'ready';
   }
-  async function postJSON(url, data) {
-    let response;
-    try {
-      response = await fetch(url, {method: 'POST', body: data, credentials: 'same-origin',
-        redirect: 'manual', headers: {Accept: 'application/json'}});
-    } catch (_) {
-      throw new Error('The connection was interrupted. Your request may have completed. Refresh the queue to check before retrying.');
+  async function postJSON(url, data, options = {}) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let response;
+      try {
+        response = await fetch(url, {method: 'POST', body: data, credentials: 'same-origin',
+          redirect: 'manual', headers: {Accept: 'application/json'}});
+      } catch (_) {
+        throw new Error('The connection was interrupted. Your request may have completed. Refresh the queue to check before retrying.');
+      }
+      if (response.type === 'opaqueredirect' || response.status === 401) {
+        throw new Error('Your session has ended. Sign in and reopen the workspace to continue.');
+      }
+      if (response.status === 429 && options.retryRateLimit && attempt < 3) {
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 60) : 2;
+        message(`Upload paused by traffic protection. It will continue automatically in ${delay} seconds.`);
+        await new Promise(resolve => setTimeout(resolve, delay * 1000));
+        continue;
+      }
+      if (response.status === 429) {
+        const delay = Number(response.headers.get('Retry-After'));
+        throw new Error(`Too many requests. ${Number.isFinite(delay) && delay > 0 ? `Wait ${delay} seconds, then` : 'Please'} refresh the queue before retrying.`);
+      }
+      let result;
+      try { result = await response.json(); }
+      catch (_) {
+        throw new Error('The server did not confirm the result. Refresh the queue to check completed uploads and approvals before retrying.');
+      }
+      if (!response.ok) {
+        const error = new Error(typeof result.detail === 'string' ? result.detail : 'The request could not be completed.');
+        error.status = response.status;
+        throw error;
+      }
+      return result;
     }
-    if (response.type === 'opaqueredirect' || response.status === 401) {
-      throw new Error('Your session has ended. Sign in and reopen the workspace to continue.');
-    }
-    if (response.status === 429) {
-      const delay = Number(response.headers.get('Retry-After'));
-      throw new Error(`Too many requests. ${Number.isFinite(delay) && delay > 0 ? `Wait ${delay} seconds, then` : 'Please'} refresh the queue before retrying.`);
-    }
-    let result;
-    try { result = await response.json(); }
-    catch (_) {
-      throw new Error('The server did not confirm the result. Refresh the queue to check completed uploads and approvals before retrying.');
-    }
-    if (!response.ok) {
-      const error = new Error(typeof result.detail === 'string' ? result.detail : 'The request could not be completed.');
-      error.status = response.status;
-      throw error;
-    }
-    return result;
   }
   function formatBytes(value) {
     if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
@@ -163,7 +172,7 @@
         data.set('parent_id', form.elements.parent_id.value);
         data.set('visibility', form.elements.visibility.value);
         data.set('file', file, file.name);
-        await postJSON('/library/upload', data);
+        await postJSON('/library/upload', data, {retryRateLimit: true});
         completed++; progress.value = completed;
       }
       dirty = false;
@@ -230,7 +239,7 @@
       start.set('file_count', String(files.length));
       start.set('folder_count', String(directories.length));
       message(`Preparing ${rootName}.`);
-      const root = await postJSON('/library/folder-upload/start', start);
+      const root = await postJSON('/library/folder-upload/start', start, {retryRateLimit: true});
       rootId = root.id;
       const folderIds = new Map([[rootName, rootId]]);
       completedFolders = 1; progress.value = 1;
@@ -243,7 +252,7 @@
         data.set('visibility', form.elements.visibility.value);
         data.set('name', parts.at(-1));
         message(`Creating ${path}.`);
-        const created = await postJSON('/library/folders', data);
+        const created = await postJSON('/library/folders', data, {retryRateLimit: true});
         folderIds.set(path, created.id);
         completedFolders++; progress.value++;
       }
@@ -256,7 +265,7 @@
         data.set('visibility', form.elements.visibility.value);
         data.set('file', item.file, parts.at(-1));
         message(`Uploading ${item.path}. ${completedFiles} of ${files.length} files complete.`);
-        await postJSON('/library/upload', data);
+        await postJSON('/library/upload', data, {retryRateLimit: true});
         completedFiles++; progress.value++;
       }
       dirty = false;

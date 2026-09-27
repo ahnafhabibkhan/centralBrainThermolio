@@ -227,6 +227,11 @@ def test_rate_limit_uses_forwarded_client_and_isolates_sign_in(pilot, monkeypatc
     assert limited.json() == {'detail': 'too many requests'}
     assert 1 <= int(limited.headers['Retry-After']) <= 60
 
+    # Large folder transfers use a separate higher-capacity bucket and do not stop
+    # merely because ordinary page traffic from this client reached its limit.
+    for _ in range(3):
+        assert first.post('/library/folders', data={}).status_code != 429
+
     # A different forwarded client has its own bucket, and unrelated workspace traffic
     # cannot prevent the original client from starting a sign-in.
     assert second.get('/').status_code == 303

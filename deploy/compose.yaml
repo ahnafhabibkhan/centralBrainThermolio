@@ -31,7 +31,7 @@ services:
   app: &runtimeapp
     <<: *app
     restart: unless-stopped
-    mem_limit: 550m
+    mem_limit: 1000m
     tmpfs: ['/tmp:size=256m,mode=1777']
     volumes: ['/opt/central-brain/library-credentials:/run/library-credentials:ro']
     depends_on:

@@ -68,6 +68,7 @@ def test_new_user_is_mapped_before_invitation_is_sent():
     ] == "true"
     assert events[2] == ("map", "new-subject")
     assert events[3][1]["MessageAction"] == "RESEND"
+    assert events[3][1]["Username"] == "person@example.com"
 
 
 def test_pending_user_is_verified_mapped_and_reinvited():
@@ -78,6 +79,7 @@ def test_pending_user_is_verified_mapped_and_reinvited():
 
     assert result.sent and result.existing
     assert [event[0] for event in events] == ["list", "verify", "map", "create"]
+    assert events[-1][1]["Username"] == "person@example.com"
 
 
 def test_active_user_is_mapped_without_duplicate_email():

@@ -73,7 +73,7 @@ class CognitoInvitationService:
             if created or pending:
                 client.admin_create_user(
                     UserPoolId=self.settings.oauth_user_pool_id,
-                    Username=user["Username"],
+                    Username=email,
                     MessageAction="RESEND",
                     DesiredDeliveryMediums=["EMAIL"],
                 )

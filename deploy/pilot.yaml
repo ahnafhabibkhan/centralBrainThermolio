@@ -96,6 +96,15 @@ Resources:
               - Effect: Allow
                 Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
                 Resource: !Sub '${LibraryFiles.Arn}/files/*'
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:ListUsers
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: CentralBrain
   Backups:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -172,15 +181,6 @@ Resources:
                 Condition:
                   StringEquals:
                     cloudwatch:namespace: CentralBrain
-              - Effect: Allow
-                Action:
-                  - cognito-idp:AdminCreateUser
-                  - cognito-idp:AdminUpdateUserAttributes
-                  - cognito-idp:ListUsers
-                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
-                Condition:
-                  StringEquals:
-                    aws:ResourceTag/Project: CentralBrain
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:

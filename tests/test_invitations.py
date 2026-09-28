@@ -1,9 +1,11 @@
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
+from test_pilot import pilot
 from central_brain.auth import AuthContext
 from central_brain.config import Principal
 from central_brain.invitations import CognitoInvitationService
@@ -103,3 +105,20 @@ def test_non_admin_cannot_invite():
         service(FakeCognito(events), events).invite(admin_auth(False), "person@example.com")
     assert error.value.status_code == 403
     assert events == []
+
+
+def test_runtime_registers_invitation_identity_without_update_privilege(pilot):
+    subject = str(uuid4())
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        identities = list(executor.map(
+            lambda _: pilot.repo.register_oauth_identity(pilot.auth, subject), range(2)
+        ))
+    assert identities[0] == identities[1]
+    assert identities[0].roles == {'reader', 'writer', 'reviewer'}
+    assert pilot.repo.oauth_principal(subject) == identities[0]
+    with pilot.repo._connection(pilot.auth) as connection:
+        count = connection.execute(
+            "SELECT count(*) AS n FROM central_brain.audit_events "
+            "WHERE action='user.invite' AND resource_id=%s", (identities[0].actor_id,),
+        ).fetchone()['n']
+    assert count == 1

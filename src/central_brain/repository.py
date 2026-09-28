@@ -265,13 +265,17 @@ class PostgresMemoryRepository:
         sensitivities = ["public", "internal"]
         with self._connection(auth) as connection:
             connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                ("oauth-identity:" + subject,),
+            )
+            connection.execute(
                 "INSERT INTO central_brain.actors(id,workspace_id,external_ref,actor_type) "
                 "VALUES (%s,%s,%s,'human') ON CONFLICT (workspace_id,external_ref) DO NOTHING",
                 (actor_id, auth.principal.workspace_id, "cognito:" + subject),
             )
             existing = connection.execute(
                 "SELECT workspace_id,actor_id,roles,sensitivities "
-                "FROM central_brain.oauth_identities WHERE subject=%s FOR UPDATE", (subject,),
+                "FROM central_brain.oauth_identities WHERE subject=%s", (subject,),
             ).fetchone()
             if existing and existing["workspace_id"] != auth.principal.workspace_id:
                 raise HTTPException(409, "This account belongs to another workspace")

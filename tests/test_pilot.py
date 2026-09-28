@@ -108,6 +108,23 @@ def test_approval_lifecycle_and_roles(pilot):
             connection.execute('DELETE FROM central_brain.audit_events')
 
 
+def test_non_admin_reviewer_can_delete_memory_with_audit(pilot):
+    reviewer = AuthContext(pilot.settings.principals()['colleague'].model_copy(
+        update={'roles': {'reader', 'writer', 'reviewer'}}
+    ))
+    record = pilot.repo.create(pilot.auth, memory())
+    pilot.repo.approve(reviewer, record.memory_id)
+    pilot.repo.transition(reviewer, record.memory_id, 'delete')
+    with pilot.repo._connection(reviewer) as connection:
+        events = connection.execute(
+            "SELECT actor_id,action FROM central_brain.audit_events WHERE resource_id=%s "
+            "AND action IN ('memory.approve','memory.delete')",
+            (record.memory_id,),
+        ).fetchall()
+    assert {event['action'] for event in events} == {'memory.approve', 'memory.delete'}
+    assert all(event['actor_id'] == reviewer.principal.actor_id for event in events)
+
+
 def test_tenant_privacy_and_missing_context(pilot):
     record = pilot.repo.create(pilot.auth, memory(visibility='private'))
     pilot.repo.approve(pilot.auth, record.memory_id)

@@ -156,7 +156,7 @@ class PostgresMemoryRepository:
             return Memory.model_validate(self._not_found(self._get(connection, auth, memory_id)))
 
     def transition(self, auth, memory_id, action, connection=None):
-        auth.require("admin" if action == "delete" else "reviewer")
+        auth.require("reviewer")
         with nullcontext(connection) if connection else self._connection(auth) as connection:
             row = self._not_found(self._get(connection, auth, memory_id, lock=True))
             if action == "delete":

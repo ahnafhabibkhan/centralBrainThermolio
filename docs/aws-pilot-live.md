@@ -6,9 +6,11 @@ This deployment was approved on September 10, 2026, with a CAD $40 monthly proje
 
 The review website is [Thermolio Central Brain](https://16.54.184.1.sslip.io). Its temporary hostname is free and points to the project's static Elastic IP. Caddy obtains and renews the TLS certificate automatically. A Thermolio subdomain can replace it later, with corresponding OAuth configuration changes.
 
-The website is publicly reachable so cloud assistants can connect, but memories and tools require an approved account. The approved Central Brain administrator email is `technology@thermolio.com`. Administrator access still depends on the email's immutable Cognito subject being present in the encrypted principal mapping. The database has no public port. The server is administered through AWS Systems Manager, with no SSH port open.
+The website is publicly reachable so cloud assistants can connect, but memories and tools require an approved account. The approved Central Brain administrator emails are `technology@thermolio.com` and `ahnaf.hkhan@quantolio.com`. Administrator access depends on each email's immutable Cognito subject being present in the encrypted principal mapping. The database has no public port. The server is administered through AWS Systems Manager, with no SSH port open.
 
 The administrator has a separate **Invite users** page in the authenticated workspace. It can send or resend Cognito invitations for reviewer accounts. Each invited account receives its own identity and can use verified-email password recovery. The invitation workflow never grants the administrator role to a recipient.
+
+Non-admin reviewers can approve, move, and delete accessible files and memories. The database retains actor-attributed audit events for these actions, including move locations and deleted item paths.
 
 ## Finish your first sign-in
 

@@ -15,6 +15,44 @@ def remove(library, auth, node):
     return library.delete(auth, node, plan['root']['name'], plan['token'])
 
 
+def test_non_admin_reviewer_actions_leave_attributed_audit_events(pilot, library):
+    reviewer = AuthContext(pilot.settings.principals()['colleague'].model_copy(
+        update={'roles': {'reader', 'writer', 'reviewer'}}
+    ))
+    reader = AuthContext(pilot.settings.principals()['assistant'])
+    node = library.upload(pilot.auth, 'Reviewable.txt', b'Reviewer action test.', proposed=True)
+
+    with pytest.raises(HTTPException) as denied:
+        library.deletion_plan(reader, node)
+    assert denied.value.status_code == 403
+
+    library.review(reviewer, node, True)
+    library.move(reviewer, node, 'Reviewed.txt')
+    remove(library, reviewer, node)
+
+    with library.repo._connection(reviewer) as connection:
+        events = connection.execute(
+            "SELECT actor_id,action,details FROM central_brain.audit_events WHERE resource_id=%s "
+            "AND action IN ('file.approve','library.move','library.delete') ORDER BY occurred_at",
+            (node,),
+        ).fetchall()
+        deletion = connection.execute(
+            'SELECT deleted_by FROM central_brain.library_deletions WHERE id=%s', (node,),
+        ).fetchone()
+    assert {event['action'] for event in events} == {
+        'file.approve', 'library.move', 'library.delete'
+    }
+    assert all(event['actor_id'] == reviewer.principal.actor_id for event in events)
+    assert next(event['details'] for event in events if event['action'] == 'library.move') == {
+        'from': {'name': 'Reviewable.txt', 'parent_id': None},
+        'to': {'name': 'Reviewed.txt', 'parent_id': None},
+    }
+    assert next(event['details'] for event in events if event['action'] == 'library.delete') == {
+        'path': '/Reviewed.txt', 'kind': 'file'
+    }
+    assert deletion['deleted_by'] == reviewer.principal.actor_id
+
+
 def test_recursive_deletion_context_and_original_cleanup(pilot, library, monkeypatch):
     auth = pilot.auth
     folder = library.folder(auth, 'Chat archive')
@@ -146,3 +184,17 @@ def test_web_delete_requires_csrf_and_confirmation(pilot, library):
     data['confirmation'] = 'Delete me.txt'
     assert client.post(url, data=data, follow_redirects=False).status_code == 303
     assert client.get(f'/library/file/{node}/download').status_code == 404
+
+
+def test_non_admin_reviewer_sees_delete_but_not_invitation_page(pilot, library):
+    client = pilot.client
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', client.get('/login').text)[1]
+    assert client.post('/login', data={
+        'token': 'reviewer', 'csrf_token': csrf
+    }, follow_redirects=False).status_code == 303
+    node = library.upload(pilot.auth, 'Reviewer visible.txt', b'Visible content.')
+    detail = client.get(f'/library/file/{node}')
+    assert detail.status_code == 200
+    assert f'/library/file/{node}/delete' in detail.text
+    assert '/admin/users' not in detail.text
+    assert client.get('/admin/users').status_code == 403

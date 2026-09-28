@@ -4,9 +4,11 @@ Central Brain stores approved memories and reviewed procedures for connected ass
 
 The pilot is deployed on AWS with HTTPS, PostgreSQL, Cognito OAuth, encrypted configuration, and daily backups. The owner invitation and server authorization are complete. Live workspace sign-in passes. Authenticator enrollment and authenticated ChatGPT and Claude tool tests remain pending. See the [live deployment guide](docs/aws-pilot-live.md) for status, costs, and next steps.
 
-The approved Central Brain administrator email is `technology@thermolio.com`. Administrator authorization is stored against the account's immutable Cognito subject, so changing this repository value does not modify the live Cognito user or send an invitation.
+The approved Central Brain administrator emails are `technology@thermolio.com` and `ahnaf.hkhan@quantolio.com`. Administrator authorization is stored against each account's immutable Cognito subject, so changing this repository value does not modify a live Cognito user or send an invitation.
 
 After signing in, an administrator can open **Invite users** to send a Cognito invitation to a reviewer. The application stores the reviewer identity before Cognito sends the email. Invited users receive reader, writer, and reviewer roles, but they do not receive administrator access. Verified accounts can use the managed **Forgot your password?** flow.
+
+Reviewers can approve, move, and delete accessible files and memories without administrator access. These actions write actor-attributed audit events. Invitation management remains administrator-only.
 
 ## Run locally
 

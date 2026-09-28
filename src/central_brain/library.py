@@ -137,11 +137,13 @@ class Library:
         ):
             raise HTTPException(413, "The pilot supports up to 10,000 library items.")
 
-    def _audit(self, c, auth, action, node):
+    def _audit(self, c, auth, action, node, details=None):
         c.execute(
-            "INSERT INTO central_brain.audit_events(id,workspace_id,actor_id,action,resource_type,resource_id,outcome) "
-            "VALUES(%s,%s,%s,%s,'library',%s,'allowed')",
-            (uuid4(), auth.principal.workspace_id, auth.principal.actor_id, action, node),
+            "INSERT INTO central_brain.audit_events"
+            "(id,workspace_id,actor_id,action,resource_type,resource_id,outcome,details) "
+            "VALUES(%s,%s,%s,%s,'library',%s,'allowed',%s)",
+            (uuid4(), auth.principal.workspace_id, auth.principal.actor_id, action, node,
+             Jsonb(details or {})),
         )
 
     def project_memories(self, auth):
@@ -360,7 +362,7 @@ class Library:
         }
 
     def _deletion_plan(self, c, auth, node_id):
-        auth.require('admin')
+        auth.require('reviewer')
         root = self._get(c, auth, node_id, True)
         if root['kind'] == 'folder' and root['parent_id'] is None and root['name'] in {'Memories', 'Skills'}:
             raise HTTPException(422, 'Memories and Skills are permanent workspace folders. You can delete their contents.')
@@ -391,7 +393,7 @@ class Library:
 
     def delete(self, auth, node_id, confirmation, token):
         from psycopg.errors import ForeignKeyViolation
-        auth.require('admin')
+        auth.require('reviewer')
         try:
             with self.repo._connection(auth) as c:
                 self._lock(c, auth)
@@ -416,7 +418,8 @@ class Library:
                         c.execute("UPDATE central_brain.memories SET content='[Deleted]',source='{}',metadata='{}',"
                                   "subject_ref=NULL,confidence=NULL,dedupe_key=NULL,status='archived',deleted_at=now() WHERE id=%s",
                                   (row['memory_id'],))
-                    self._audit(c, auth, 'library.delete', row['id'])
+                    self._audit(c, auth, 'library.delete', row['id'],
+                                {'path': item_path, 'kind': row['kind']})
                 c.execute('DELETE FROM central_brain.library_sections WHERE version_id IN '
                           '(SELECT id FROM central_brain.library_versions WHERE node_id=ANY(%s))', (ids,))
                 c.execute('DELETE FROM central_brain.library_versions WHERE node_id=ANY(%s)', (ids,))
@@ -555,7 +558,10 @@ class Library:
                 "UPDATE central_brain.library_nodes SET name=%s,parent_id=%s WHERE id=%s",
                 (name, parent, node_id),
             )
-            self._audit(c, auth, "library.move", node_id)
+            self._audit(c, auth, "library.move", node_id, {
+                "from": {"name": row["name"], "parent_id": str(row["parent_id"]) if row["parent_id"] else None},
+                "to": {"name": name, "parent_id": str(parent) if parent else None},
+            })
 
     def copy(self, auth, node_id, name, parent=None, version=None, expected_sha256=None,
              connection=None, stored_keys=None):

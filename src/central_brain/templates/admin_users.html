@@ -1,0 +1,24 @@
+{% extends 'base.html' %}{% block content %}
+<div class="guide">
+  <p class="eyebrow">ADMINISTRATION</p>
+  <h1>Invite users.</h1>
+  <p class="lead">Send a secure Central Brain invitation to a new reviewer.</p>
+  <section class="guide-section">
+    <h2>Email invitation</h2>
+    <p>The recipient will receive the Central Brain sign-in address and a temporary password. They must choose a new password when they first sign in.</p>
+    {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <form action="/admin/users/invite" method="post" class="editor">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" value="{{ email or '' }}" required autocomplete="email" maxlength="254">
+      <button class="primary" type="submit">Send invitation</button>
+    </form>
+  </section>
+  <section class="guide-section">
+    <h2>Password recovery</h2>
+    <p>Users with a verified email can request a reset code through Cognito. The administrator account uses the same protected recovery flow.</p>
+    <a class="button" href="/auth/password-reset">Reset a password</a>
+  </section>
+</div>
+{% endblock %}

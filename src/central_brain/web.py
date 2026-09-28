@@ -6,6 +6,7 @@ import secrets
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import UUID
 
 from authlib.integrations.base_client.errors import MismatchingStateError
@@ -124,7 +125,9 @@ def install_web(app, settings, repo):
             auth = reviewer(request)
             app.state.library.project_memories(auth)
             roots, tree = app.state.library.workspace_folders(auth)
-            context.update(library_roots=roots, folder_tree=tree, can_delete='admin' in auth.principal.roles)
+            context.update(library_roots=roots, folder_tree=tree,
+                           can_delete='admin' in auth.principal.roles,
+                           can_admin='admin' in auth.principal.roles)
         return templates.TemplateResponse(request=request, name=template, context={
             "csrf": csrf(request), "local": settings.environment == "local", **context,
         })
@@ -160,6 +163,45 @@ def install_web(app, settings, repo):
     def getting_started(request: Request):
         from .manage import ROOT
         return page(request, "getting-started.html", title="Getting started", project_path=str(ROOT))
+
+    @app.get("/admin/users", include_in_schema=False)
+    def admin_users(request: Request):
+        auth = reviewer(request)
+        auth.require("admin")
+        return page(request, "admin_users.html", title="Invite users",
+                    notice=request.session.pop("admin_notice", None))
+
+    @app.post("/admin/users/invite", include_in_schema=False)
+    def invite_user(request: Request, email: str = Form(...), csrf_token: str = Form(...)):
+        check_csrf(request, csrf_token)
+        auth = reviewer(request)
+        auth.require("admin")
+        if app.state.invitation_service is None:
+            raise HTTPException(503, "Invitations are available only in the deployed workspace")
+        try:
+            result = app.state.invitation_service.invite(auth, email)
+        except HTTPException as exc:
+            response = page(request, "admin_users.html", title="Invite users",
+                            error=str(exc.detail), email=email)
+            response.status_code = exc.status_code
+            return response
+        request.session["admin_notice"] = (
+            "The invitation email was sent."
+            if result.sent else "This account is already active and can sign in."
+        )
+        return RedirectResponse("/admin/users", 303)
+
+    @app.get("/auth/password-reset", include_in_schema=False)
+    def password_reset():
+        if not settings.oauth_hosted_domain:
+            return RedirectResponse("/login", 303)
+        query = urlencode({
+            "client_id": settings.oauth_web_client_id,
+            "response_type": "code",
+            "scope": "openid",
+            "redirect_uri": settings.public_url + "/auth/callback",
+        })
+        return RedirectResponse(settings.oauth_hosted_domain + "/forgotPassword?" + query, 303)
 
     @app.post("/login", include_in_schema=False)
     def local_login(request: Request, token: str = Form(...), csrf_token: str = Form(...)):

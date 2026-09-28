@@ -3,7 +3,7 @@ import json
 import math
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import HTTPException
 from psycopg.rows import dict_row
@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from .auth import AuthContext
+from .config import Principal
 from .models import Memory, MemoryCreate, SearchRequest, SearchResult, Skill, WriteReceipt
 
 
@@ -248,6 +249,49 @@ class PostgresMemoryRepository:
         with self.pool.connection() as connection:
             connection.execute("DELETE FROM central_brain.web_sessions WHERE id_hash=%s",
                                (hashlib.sha256(session_id.encode()).hexdigest(),))
+
+    def oauth_principal(self, subject):
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                "SELECT workspace_id,actor_id,roles,sensitivities "
+                "FROM central_brain.oauth_identities WHERE subject=%s", (subject,),
+            ).fetchone()
+        return Principal(**row) if row else None
+
+    def register_oauth_identity(self, auth, subject):
+        auth.require("admin")
+        actor_id = uuid5(auth.principal.workspace_id, "cognito:" + subject)
+        roles = ["reader", "writer", "reviewer"]
+        sensitivities = ["public", "internal"]
+        with self._connection(auth) as connection:
+            connection.execute(
+                "INSERT INTO central_brain.actors(id,workspace_id,external_ref,actor_type) "
+                "VALUES (%s,%s,%s,'human') ON CONFLICT (workspace_id,external_ref) DO NOTHING",
+                (actor_id, auth.principal.workspace_id, "cognito:" + subject),
+            )
+            existing = connection.execute(
+                "SELECT workspace_id,actor_id,roles,sensitivities "
+                "FROM central_brain.oauth_identities WHERE subject=%s FOR UPDATE", (subject,),
+            ).fetchone()
+            if existing and existing["workspace_id"] != auth.principal.workspace_id:
+                raise HTTPException(409, "This account belongs to another workspace")
+            if not existing:
+                connection.execute(
+                    "INSERT INTO central_brain.oauth_identities "
+                    "(subject,workspace_id,actor_id,roles,sensitivities,invited_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (subject, auth.principal.workspace_id, actor_id, roles, sensitivities,
+                     auth.principal.actor_id),
+                )
+                connection.execute(
+                    "INSERT INTO central_brain.audit_events "
+                    "(id,workspace_id,actor_id,action,resource_type,resource_id,outcome) "
+                    "VALUES (%s,%s,%s,'user.invite','identity',%s,'allowed')",
+                    (uuid4(), auth.principal.workspace_id, auth.principal.actor_id, actor_id),
+                )
+                existing = {"workspace_id": auth.principal.workspace_id, "actor_id": actor_id,
+                            "roles": roles, "sensitivities": sensitivities}
+        return Principal(**existing)
 
     @staticmethod
     def _audit(connection, auth, action, resource_id):

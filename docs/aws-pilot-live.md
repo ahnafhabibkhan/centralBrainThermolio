@@ -6,12 +6,14 @@ This deployment was approved on September 10, 2026, with a CAD $40 monthly proje
 
 The review website is [Thermolio Central Brain](https://16.54.184.1.sslip.io). Its temporary hostname is free and points to the project's static Elastic IP. Caddy obtains and renews the TLS certificate automatically. A Thermolio subdomain can replace it later, with corresponding OAuth configuration changes.
 
-The website is publicly reachable so cloud assistants can connect, but memories and tools require an approved account. The database has no public port. The server is administered through AWS Systems Manager, with no SSH port open.
+The website is publicly reachable so cloud assistants can connect, but memories and tools require an approved account. The approved Central Brain administrator email is `technology@thermolio.com`. Administrator access still depends on the email's immutable Cognito subject being present in the encrypted principal mapping. The database has no public port. The server is administered through AWS Systems Manager, with no SSH port open.
+
+The administrator has a separate **Invite users** page in the authenticated workspace. It can send or resend Cognito invitations for reviewer accounts. Each invited account receives its own identity and can use verified-email password recovery. The invitation workflow never grants the administrator role to a recipient.
 
 ## Finish your first sign-in
 
 1. Open Central Brain. Normal access goes directly to secure authentication, and an existing application session opens the workspace immediately.
-2. Use the permanent password already set for the invited account. MFA is disabled, so no authenticator enrollment or code is required. Do not share the password in chat.
+2. Sign in as `technology@thermolio.com` with the permanent password already set for the invited account. MFA is disabled, so no authenticator enrollment or code is required. Do not share the password in chat.
 3. After authentication, the site opens the review workspace. No second application sign-in is required.
 4. Ignore the earlier AWS notification confirmation email. The owner requested internal AWS management, and the stack's alert email parameter is now empty.
 5. Use the selected Thermolio Claude account for its connector. No Claude connector has been saved to an account yet.

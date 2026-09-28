@@ -10,7 +10,7 @@ The project budget is USD $20, filtered by the activated `Project=CentralBrain` 
 
 ## 1. Review inputs and preview changes
 
-Choose an available free hostname, such as an approved DuckDNS subdomain. Record its HTTPS origin without a trailing slash. Get the exact callback URLs from the ChatGPT and Claude connector setup screens; do not guess them. Choose the owner's sign-in email, alert email, and a unique Cognito domain prefix.
+Choose an available free hostname, such as an approved DuckDNS subdomain. Record its HTTPS origin without a trailing slash. Get the exact callback URLs from the ChatGPT and Claude connector setup screens; do not guess them. The approved Central Brain administrator sign-in email is `technology@thermolio.com`. Choose the alert email separately, because the administrator address does not subscribe anyone to service or budget notifications. Choose a unique Cognito domain prefix.
 
 Confirm the selected VPC, subnet, and availability zone agree. Previously inspected candidates were VPC `vpc-001b383be7a969294`, subnet `subnet-058870551a5c4e29d`, and zone `ca-central-1a`. Recheck those read-only before deployment. Public outbound internet access is required for SSM, package downloads, Cognito, and certificate issuance.
 
@@ -65,6 +65,18 @@ Before deployment, pin the `postgres:17` and `caddy:2` references in the reviewe
 ## 4. Configure authentication and credentials
 
 The template creates a private Cognito user pool with email and password sign-in. MFA is disabled. Create only approved accounts with authorization to send their invitations. Complete password setup, then record each account's immutable Cognito `sub`. Disable public self-registration.
+
+The administrator onboarding helper defaults to the approved address and grants administrator roles only after Cognito returns its immutable subject:
+
+```bash
+python scripts/onboard_pilot_user.py
+```
+
+Running this command can create a Cognito user, send an invitation, and update the encrypted subject mapping. Treat it as a deployment action and run it only with explicit authorization. Pass a different email argument only when an approved administrator change has also been recorded in this runbook.
+
+The deployed administrator can invite additional reviewers from **Invite users** in the authenticated workspace. The application first creates the Cognito profile without delivery, records the immutable subject in `central_brain.oauth_identities`, and then sends the invitation. This ordering prevents a recipient from receiving credentials before authorization is ready. Invited accounts receive reader, writer, and reviewer roles. They do not receive the administrator role.
+
+Cognito marks invited email addresses as verified and uses verified email as the account-recovery mechanism. The managed login page and the Central Brain **Reset a password** link both open Cognito's self-service reset flow. Never store a permanent password in this repository or in deployment scripts.
 
 Fetch each client secret through an authenticated AWS administration session. Store the web client secret only on the host. Enter each assistant client secret only in the corresponding connector's secure setup form. Never put secrets into conversation messages, Git, URLs, screenshots, or memories.
 

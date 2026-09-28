@@ -17,8 +17,9 @@ class AuthContext:
 
 
 class TokenAuthenticator:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, principal_resolver=None):
         self.settings = settings
+        self.principal_resolver = principal_resolver
         self.jwks = (jwt.PyJWKClient(settings.oauth_issuer.rstrip("/") + "/.well-known/jwks.json")
                      if settings.environment == "production" else None)
 
@@ -39,7 +40,11 @@ class TokenAuthenticator:
                 raise ValueError("Expected an access token")
             if claims["client_id"] not in self.settings.oauth_client_ids:
                 raise ValueError("Unknown OAuth client")
-            principal = self.settings.oauth_principals()[claims["sub"]]
+            principal = self.settings.oauth_principals().get(claims["sub"])
+            if principal is None and self.principal_resolver is not None:
+                principal = self.principal_resolver(claims["sub"])
+            if principal is None:
+                raise ValueError("Unknown OAuth subject")
             scope_roles = {
                 "read": "reader", "propose": "writer", "review": "reviewer", "admin": "admin"
             }

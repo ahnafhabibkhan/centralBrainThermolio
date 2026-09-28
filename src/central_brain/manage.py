@@ -84,6 +84,7 @@ def bootstrap(admin_url, runtime_url, migrator_url, database="central_brain", re
         for name in (
             "001_core.sql", "003_pilot.sql", "004_library.sql", "005_library_deletions.sql",
             "006_library_copies.sql", "007_transfer_reservations.sql", "008_library_file_size.sql",
+            "009_user_invitations.sql",
         ):
             connection.execute((ROOT / "database/migrations" / name).read_text())
         connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
@@ -92,6 +93,8 @@ def bootstrap(admin_url, runtime_url, migrator_url, database="central_brain", re
         connection.execute("GRANT SELECT ON ALL TABLES IN SCHEMA central_brain TO central_brain_runtime")
         connection.execute("GRANT INSERT, UPDATE ON central_brain.memories TO central_brain_runtime")
         connection.execute("GRANT INSERT ON central_brain.audit_events TO central_brain_runtime")
+        connection.execute("GRANT INSERT ON central_brain.actors TO central_brain_runtime")
+        connection.execute("GRANT INSERT ON central_brain.oauth_identities TO central_brain_runtime")
         connection.execute("GRANT INSERT, DELETE ON central_brain.web_sessions TO central_brain_runtime")
         connection.execute("GRANT INSERT, UPDATE, DELETE ON central_brain.library_nodes,central_brain.library_versions,central_brain.library_sections,central_brain.library_suggestions TO central_brain_runtime")
         connection.execute("GRANT INSERT, UPDATE, DELETE ON central_brain.library_deletions TO central_brain_runtime")

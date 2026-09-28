@@ -172,6 +172,15 @@ Resources:
                 Condition:
                   StringEquals:
                     cloudwatch:namespace: CentralBrain
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:ListUsers
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: CentralBrain
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -254,6 +263,16 @@ Resources:
       UserPoolName: central-brain-pilot
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: You are invited to Thermolio Central Brain
+          EmailMessage: !If
+            - CustomOrigin
+            - !Sub 'You have been invited to Thermolio Central Brain. Open ${PublicOrigin} and sign in with username {username} and temporary password {####}. You must choose a new password when you first sign in.'
+            - !Sub 'You have been invited to Thermolio Central Brain. Open https://${Address}.sslip.io and sign in with username {username} and temporary password {####}. You must choose a new password when you first sign in.'
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
       MfaConfiguration: 'OFF'

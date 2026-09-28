@@ -44,9 +44,11 @@ def pilot():
               'roles': {'reader', 'writer', 'reviewer', 'admin'}}
     owner = Principal(**common)
     assistant = owner.model_copy(update={'roles': {'reader', 'writer'}})
+    reviewer = owner.model_copy(update={'roles': {'reader', 'writer', 'reviewer'}})
     outsider = owner.model_copy(update={'workspace_id': other_workspace})
     colleague = owner.model_copy(update={'actor_id': other_actor})
-    principals = {'owner': owner, 'assistant': assistant, 'outsider': outsider, 'colleague': colleague}
+    principals = {'owner': owner, 'assistant': assistant, 'reviewer': reviewer,
+                  'outsider': outsider, 'colleague': colleague}
     settings = Settings(database_url=database, session_secret='t' * 48,
                         central_brain_principals_json=json.dumps({
                             key: value.model_dump(mode='json') for key, value in principals.items()}),
@@ -196,6 +198,42 @@ def test_hosted_login_skips_landing_page(pilot):
     assert pilot.client.get('/login?signed_out=true').status_code == 200
 
 
+def test_admin_can_open_invitation_page_and_submit_email(pilot):
+    class Invitations:
+        email = None
+
+        def invite(self, auth, email):
+            auth.require('admin')
+            self.email = email
+            return SimpleNamespace(sent=True)
+
+    c = pilot.client
+    login_page = c.get('/login')
+    c.post('/login', data={'token': 'owner', 'csrf_token': csrf(login_page)})
+    invitations = Invitations()
+    c.app.state.invitation_service = invitations
+
+    page = c.get('/admin/users')
+    assert page.status_code == 200
+    assert 'Send invitation' in page.text
+    response = c.post('/admin/users/invite', data={
+        'email': 'person@example.com', 'csrf_token': csrf(page),
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/admin/users'
+    assert invitations.email == 'person@example.com'
+    assert 'invitation email was sent' in c.get('/admin/users').text
+
+
+def test_reviewer_cannot_open_invitation_page(pilot):
+    c = pilot.client
+    login_page = c.get('/login')
+    c.post('/login', data={'token': 'reviewer', 'csrf_token': csrf(login_page)})
+
+    response = c.get('/admin/users')
+    assert response.status_code == 403
+
+
 def production_settings(pilot, requests_per_minute=60):
     return Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
         environment='production', public_url='https://brain.example',
@@ -319,6 +357,28 @@ def test_signed_oauth_tokens(pilot):
         authenticator.verify(jwt.encode(unbound_claims, key, algorithm='RS256'))
 
 
+def test_signed_oauth_tokens_resolve_invited_users(pilot):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
+        environment='production', public_url='https://brain.example',
+        central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
+        oauth_hosted_domain='https://auth.example',
+        oauth_client_ids=['web'], oauth_web_client_id='web')
+    invited = pilot.auth.principal.model_copy(update={'roles': {'reader', 'writer', 'reviewer'}})
+    authenticator = TokenAuthenticator(
+        settings, principal_resolver=lambda subject: invited if subject == 'invited' else None,
+    )
+    authenticator.jwks = SimpleNamespace(
+        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key()))
+    claims = {'iss': settings.oauth_issuer, 'aud': settings.oauth_resource, 'sub': 'invited',
+              'client_id': 'web', 'token_use': 'access', 'iat': datetime.now(UTC),
+              'exp': datetime.now(UTC) + timedelta(minutes=5),
+              'scope': 'central-brain/read central-brain/propose central-brain/review central-brain/admin'}
+
+    principal = authenticator.verify(jwt.encode(claims, key, algorithm='RS256')).principal
+    assert principal.roles == {'reader', 'writer', 'reviewer'}
+
+
 def test_oauth_callback_establishes_workspace_once(pilot, monkeypatch):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
@@ -393,9 +453,13 @@ def test_oauth_cookie_preflight_and_callback_rejection(pilot, monkeypatch):
     settings = Settings(database_url=pilot.settings.database_url, session_secret='t' * 48,
         environment='production', public_url='https://brain.example',
         central_brain_principals_json='{}', oauth_issuer='https://issuer.example/pool',
+        oauth_hosted_domain='https://auth.example',
         oauth_client_ids=['web'], oauth_web_client_id='web')
     app = create_app(pilot.repo, settings)
     with TestClient(app, base_url=settings.public_url) as client:
+        reset = client.get('/auth/password-reset', follow_redirects=False)
+        assert reset.status_code == 303
+        assert reset.headers['location'].startswith(settings.oauth_hosted_domain + '/forgotPassword?')
         # No cookie means no automatic loop when the browser blocks cookies.
         missing = client.get('/auth/callback?code=unused&state=missing', follow_redirects=False)
         assert missing.status_code == 200

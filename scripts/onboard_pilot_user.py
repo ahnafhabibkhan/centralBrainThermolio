@@ -12,11 +12,17 @@ WORKSPACE_ID = "a22cdb8e-6c0d-4b59-b292-a4e5593156c1"
 ACTOR_ID = "f1aa197b-4291-4d81-a00c-cab55a1ceff0"
 POOL_ID = "ca-central-1_T8tjnzjRh"
 PARAMETER = "/central-brain/pilot/environment"
+ADMIN_EMAIL = "technology@thermolio.com"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("email")
+    parser.add_argument(
+        "email",
+        nargs="?",
+        default=ADMIN_EMAIL,
+        help=f"Approved administrator address. Defaults to {ADMIN_EMAIL}.",
+    )
     args = parser.parse_args()
     email = args.email.strip().lower()
     if "@" not in email or any(character.isspace() for character in email):

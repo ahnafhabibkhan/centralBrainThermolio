@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     oauth_client_ids: list[str] = Field(default_factory=list)
     oauth_web_client_id: str = ""
     oauth_web_client_secret: str = ""
+    oauth_user_pool_id: str = ""
     oauth_scope_prefix: str = "central-brain"
     max_search_results: int = Field(default=20, ge=1, le=100)
     max_context_chars: int = Field(default=16000, ge=1000, le=100000)
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires HTTPS and an OAuth issuer")
             if not self.oauth_web_client_id or not self.oauth_client_ids:
                 raise ValueError("Production requires registered OAuth clients")
+            if not self.oauth_user_pool_id:
+                self.oauth_user_pool_id = self.oauth_issuer.rstrip("/").rsplit("/", 1)[-1]
             if self.central_brain_principals_json != "{}":
                 raise ValueError("Static bearer tokens are local-development only")
             if self.oauth_hosted_domain:

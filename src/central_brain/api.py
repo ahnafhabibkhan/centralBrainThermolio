@@ -18,6 +18,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .auth import AuthContext, TokenAuthenticator, authenticate
 from .config import Settings, get_settings
+from .invitations import CognitoInvitationService
 from .mcp_server import build_mcp, current_auth
 from .models import (
     Memory,
@@ -123,7 +124,10 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
                   redoc_url=None)
     app.state.repository = repo
     app.state.settings = settings
-    app.state.authenticator = TokenAuthenticator(settings)
+    app.state.authenticator = TokenAuthenticator(settings, repo.oauth_principal)
+    app.state.invitation_service = (
+        CognitoInvitationService(settings, repo) if settings.environment == "production" else None
+    )
     app.dependency_overrides[get_settings] = lambda: settings
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
                        session_cookie="brain_session", max_age=28800, same_site="lax",

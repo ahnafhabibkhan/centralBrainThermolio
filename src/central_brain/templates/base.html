@@ -11,7 +11,7 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar"><a class="brand" href="/" aria-label="Thermolio Central Brain home"><img class="brand-logo" src="/static/thermolio-logo.svg" alt="Thermolio" width="156" height="36"><span class="brand-product">Central Brain</span></a>
-  <div class="account-actions">{% if request.session.get('sid') %}<a href="/getting-started">Getting started</a>
+  <div class="account-actions">{% if request.session.get('sid') %}{% if can_admin %}<a href="/admin/users">Invite users</a>{% endif %}<a href="/getting-started">Getting started</a>
     <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="quiet">Sign out</button></form>
   {% else %}<span class="environment"><span class="status-dot" aria-hidden="true"></span>Internal workspace</span>{% endif %}
   <button type="button" class="theme-toggle" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode" hidden><svg class="theme-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 13.3A8.6 8.6 0 0 1 10.7 3.5a8.6 8.6 0 1 0 9.8 9.8Z"/></svg><svg class="theme-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg><span>Dark mode</span><span class="theme-switch" aria-hidden="true"></span></button>

@@ -253,6 +253,52 @@ def test_folder_upload_plan_controls_and_streaming_download(pilot, library):
         assert downloaded.extractfile("Project Drop/Reports/Status.txt").read() == b"Folder bytes"
 
 
+def test_upload_destinations_include_accessible_nested_folders(pilot, library):
+    client = pilot.client
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', client.get('/login').text)[1]
+    client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
+    operations = library.folder(pilot.auth, 'Operations')
+    target = library.folder(pilot.auth, 'Quarterly', operations)
+    finance = library.folder(pilot.auth, 'Finance')
+    other_quarterly = library.folder(pilot.auth, 'Quarterly', finance)
+    colleague = AuthContext(pilot.settings.principals()['colleague'])
+    private = library.folder(colleague, 'Private Plans', visibility='private')
+
+    root_page = client.get('/library').text
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', root_page)[1]
+    for select_id in ('file-parent', 'folder-upload-parent'):
+        options = re.search(
+            rf'<select id="{select_id}" name="parent_id">(.*?)</select>', root_page, re.S
+        )[1]
+        assert '<option value="" selected>Workspace</option>' in options
+        assert f'value="{target}"' in options and 'Operations / Quarterly' in options
+        assert f'value="{other_quarterly}"' in options and 'Finance / Quarterly' in options
+        assert f'value="{private}"' not in options
+        assert 'Private Plans' not in options
+
+    current_page = client.get(f'/library?folder={target}').text
+    for select_id in ('file-parent', 'folder-upload-parent'):
+        options = re.search(
+            rf'<select id="{select_id}" name="parent_id">(.*?)</select>', current_page, re.S
+        )[1]
+        assert re.search(rf'<option value="{target}"[^>]* selected>', options)
+
+    uploaded = client.post(
+        '/library/upload', data={'csrf_token': csrf, 'parent_id': str(target)},
+        files={'file': ('Notes.txt', b'Targeted file')}, headers={'Accept': 'application/json'},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert library.info(pilot.auth, uploaded.json()['id'])['path'] == '/Operations/Quarterly/Notes.txt'
+    folder_upload = client.post(
+        '/library/folder-upload/start', data={
+            'csrf_token': csrf, 'name': 'Selected Upload', 'parent_id': str(other_quarterly),
+            'total_size': 1, 'file_count': 1, 'folder_count': 1,
+        }, headers={'Accept': 'application/json'},
+    )
+    assert folder_upload.status_code == 200, folder_upload.text
+    assert folder_upload.json()['path'] == '/Finance/Quarterly/Selected Upload'
+
+
 def test_library_navigation_and_markdown_memory_replacements(pilot, library):
     client = pilot.client
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', client.get('/login').text)[1]

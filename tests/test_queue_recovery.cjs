@@ -15,6 +15,7 @@ async function scenario(failAt) {
   const form = {elements:{files:{files:[file]}, folder:{files:[]}, csrf_token:{value:'csrf'}}, dataset:{inventory:JSON.stringify(inventory)}, querySelectorAll:()=>controls};
   const calls = []; let refreshed = false;
   const context = vm.createContext({crypto:webcrypto, FormData, Uint8Array, console, document:{querySelector:()=>notice}, busy:false,
+    fileLimit:500 * 1024 * 1024,
     postJSON:async(url,data)=>{calls.push(Number(data.get('index'))); if(calls.length === failAt) throw new Error('Connection interrupted.');},
     refresh:async()=>{refreshed = true;}});
   await vm.runInContext(upload+'; uploadQueue',context)(form);

@@ -15,6 +15,7 @@
   const fileSelections = new WeakMap();
   const folderSelections = new WeakMap();
   const fileLimit = 500 * 1024 * 1024;
+  const allFileTypes = document.getElementById('file').accept;
   history.replaceState(null, '', '/library');
 
   const folderURL = () => '/library' + (selected ? '?folder=' + encodeURIComponent(selected) : '');
@@ -80,6 +81,15 @@
     const extensions = input.accept.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     return !extensions.length || extensions.some(extension => file.name.toLowerCase().endsWith(extension));
   }
+  function updateFileTypes() {
+    const input = document.getElementById('file');
+    const destination = document.getElementById('file-parent');
+    if (input && destination) {
+      input.accept = destination.selectedOptions[0]?.dataset.memoryFolder === 'true'
+        ? '.md' : allFileTypes;
+    }
+  }
+  updateFileTypes();
   function validSegment(value) {
     return value && value.length <= 240 && !['.', '..'].includes(value)
       && !/[\\/\u0000-\u001f]/.test(value);
@@ -186,6 +196,10 @@
     const input = form.querySelector('input[type="file"]');
     const selection = folderSelections.get(form) || folderSelectionFromInput(input);
     if (!selection.files.length) { message('Choose or drop a folder containing files.', true); return; }
+    if (form.elements.parent_id.selectedOptions[0]?.dataset.memoryFolder === 'true'
+        && selection.files.some(item => !item.file.name.toLowerCase().endsWith('.md'))) {
+      message('Folders uploaded into Memories may contain only Markdown files.', true); return;
+    }
     const invalidSizes = selection.files.filter(item => item.file.size > fileLimit);
     if (invalidSizes.length && !form.elements.skip_invalid.checked) {
       const names = invalidSizes.slice(0, 3).map(item => item.path).join(', ');
@@ -432,7 +446,10 @@
   }
   function replaceRegion(id, doc) {
     const next = doc.getElementById(id);
-    if (next) document.getElementById(id).replaceChildren(...next.childNodes);
+    if (next) {
+      document.getElementById(id).replaceChildren(...next.childNodes);
+      if (id === 'library-actions') updateFileTypes();
+    }
   }
   async function refresh(includeFolder = true) {
     const requestedFolder = selected;
@@ -514,6 +531,7 @@
     if (event.target.closest('#folder-content form,#library-actions form')) dirty = true;
   });
   document.addEventListener('change', event => {
+    if (event.target.matches('#file-parent')) updateFileTypes();
     const fileForm = event.target.closest('form[data-file-upload]');
     const folderForm = event.target.closest('form[data-folder-upload]');
     if (fileForm && event.target.matches('input[type="file"]')) {

@@ -263,6 +263,17 @@ class PostgresMemoryRepository:
             ).fetchone()
         return Principal(**row) if row else None
 
+    def workspace_oauth_principals(self, auth):
+        """Return registered identities only within the administrator's workspace."""
+        auth.require("admin")
+        with self._connection(auth) as connection:
+            rows = connection.execute(
+                "SELECT workspace_id,actor_id,roles,sensitivities "
+                "FROM central_brain.oauth_identities WHERE workspace_id=%s ORDER BY actor_id",
+                (auth.principal.workspace_id,),
+            ).fetchall()
+        return [Principal(**row) for row in rows]
+
     def register_oauth_identity(self, auth, subject):
         auth.require("admin")
         actor_id = uuid5(auth.principal.workspace_id, "cognito:" + subject)

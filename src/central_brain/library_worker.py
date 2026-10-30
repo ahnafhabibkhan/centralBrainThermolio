@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from time import monotonic
 
 from .auth import AuthContext
 from .config import get_settings
@@ -12,9 +13,67 @@ from .library import Library
 from .repository import PostgresMemoryRepository
 
 
+class WorkerIdentities:
+    """Refresh invited identities within workspaces administered by configured users."""
+
+    def __init__(self, repo, settings, refresh_seconds=30):
+        self.repo = repo
+        self.refresh_seconds = refresh_seconds
+        principals = (
+            settings.oauth_principals()
+            if settings.environment == "production"
+            else settings.principals()
+        )
+        self.administrators = {
+            p.workspace_id: p for p in principals.values() if "admin" in p.roles
+        }
+        self.configured = {(p.workspace_id, p.actor_id): p for p in principals.values()}
+        self._current = ()
+        self._refresh_at = 0
+
+    def current(self):
+        now = monotonic()
+        if now < self._refresh_at:
+            return self._current
+        principals = dict(self.configured)
+        for workspace_id, administrator in self.administrators.items():
+            try:
+                invited = self.repo.workspace_oauth_principals(AuthContext(administrator))
+                for principal in invited:
+                    if principal.workspace_id == workspace_id:
+                        principals.setdefault((workspace_id, principal.actor_id), principal)
+            except Exception:
+                logging.getLogger("central_brain").exception(
+                    "Worker identity refresh failed. Configured identities remain available until retry."
+                )
+        self._current = tuple(
+            principal.model_copy(update={"roles": {"reader", "writer"}})
+            for principal in principals.values()
+            if {"reader", "writer"}.issubset(principal.roles)
+        )
+        self._refresh_at = now + self.refresh_seconds
+        return self._current
+
+
+def process_cycle(library, identities):
+    """Process one extraction and deletion attempt for each current worker identity."""
+    busy = False
+    for principal in identities.current():
+        auth = AuthContext(principal)
+        for operation in (purge_one, process_one):
+            try:
+                busy = operation(library, auth) or busy
+            except Exception:
+                logging.getLogger("central_brain").exception(
+                    "Library maintenance failed during %s.", operation.__name__
+                )
+    return busy
+
+
 def purge_one(library, auth):
     """Retry original-object deletion after the database removal has committed."""
     from psycopg.types.json import Jsonb
+
     from .project_transfer import expire_incomplete
     expire_incomplete(library, auth)
     with library.repo._connection(auth) as c:
@@ -124,22 +183,10 @@ def main():
     repo = PostgresMemoryRepository(settings.database_url)
     repo.open()
     library = Library(repo, settings)
-    principals = (
-        settings.oauth_principals()
-        if settings.environment == "production"
-        else settings.principals()
-    )
-    unique = {(p.workspace_id, p.actor_id): p for p in principals.values()}
+    identities = WorkerIdentities(repo, settings)
     try:
         while True:
-            busy = False
-            for principal in unique.values():
-                try:
-                    busy = purge_one(library, AuthContext(principal)) or busy
-                    busy = process_one(library, AuthContext(principal)) or busy
-                except Exception:
-                    logging.exception("Library queue unavailable")
-            if not busy:
+            if not process_cycle(library, identities):
                 time.sleep(3)
     finally:
         repo.close()

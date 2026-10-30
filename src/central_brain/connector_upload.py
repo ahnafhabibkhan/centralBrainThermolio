@@ -54,8 +54,8 @@ def upload_chunk(library, auth, archive_id, index, offset, content):
         if not 0 <= index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][index]
-        if p.get('reviews', {}).get(str(index)) == 'rejected':
-            raise HTTPException(409, 'This original was rejected.')
+        if p.get('reviews', {}).get(str(index)) in {'rejected', 'superseded'}:
+            raise HTTPException(409, 'This original was rejected or superseded by a newer upload.')
         if time.time() >= p['transfer_expires'] and not f['received']:
             raise HTTPException(409, 'The incomplete transfer expired.')
         if len(data) != min(CHUNK_BYTES, f['size_bytes'] - offset):
@@ -87,4 +87,6 @@ def upload_chunk(library, auth, archive_id, index, offset, content):
             library._audit(c, auth, 'archive.original_received', archive_id)
         c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), archive_id))
         return {'archive_id': str(archive_id), 'file_index': index, 'next_offset': next_offset,
-                'file_received': f['received'], 'ready_for_approval': all(f['received'] for f in p['files'])}
+                'file_received': f['received'], 'ready_for_approval': all(
+                    item['received'] for i, item in enumerate(p['files'])
+                    if p.get('reviews', {}).get(str(i), 'pending') == 'pending')}

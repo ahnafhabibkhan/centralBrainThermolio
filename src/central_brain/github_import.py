@@ -79,8 +79,8 @@ def import_original(library, auth, archive_id, file_index, download_url):
         payload = row['payload']
         if not 0 <= file_index < len(payload['files']):
             raise HTTPException(404, 'Original not found.')
-        if payload.get('reviews', {}).get(str(file_index)) == 'rejected':
-            raise HTTPException(409, 'This original was rejected.')
+        if payload.get('reviews', {}).get(str(file_index)) in {'rejected', 'superseded'}:
+            raise HTTPException(409, 'This original was rejected or superseded by a newer upload.')
         item = payload['files'][file_index]
         if item['received'] and original_intact(library, item):
             return {'received': item['name'], 'duplicate': True}

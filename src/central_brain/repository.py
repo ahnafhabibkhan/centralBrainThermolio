@@ -41,6 +41,11 @@ class PostgresMemoryRepository:
                                (str(auth.principal.workspace_id),))
             connection.execute("SELECT set_config('app.actor_id', %s, true)",
                                (str(auth.principal.actor_id),))
+            connection.execute("SELECT set_config('app.can_review_archives', %s, true)",
+                               ("true" if "reviewer" in auth.principal.roles
+                                and "internal" in auth.principal.sensitivities else "false",))
+            connection.execute("SELECT set_config('app.archive_review_sensitivities', %s, true)",
+                               (json.dumps(auth.principal.sensitivities),))
             connection.execute("SET LOCAL statement_timeout='5000ms'")
             yield connection
 

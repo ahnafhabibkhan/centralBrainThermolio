@@ -84,7 +84,7 @@ def bootstrap(admin_url, runtime_url, migrator_url, database="central_brain", re
         for name in (
             "001_core.sql", "003_pilot.sql", "004_library.sql", "005_library_deletions.sql",
             "006_library_copies.sql", "007_transfer_reservations.sql", "008_library_file_size.sql",
-            "009_user_invitations.sql",
+            "009_user_invitations.sql", "010_workspace_archive_review.sql", "011_upload_provenance.sql",
         ):
             connection.execute((ROOT / "database/migrations" / name).read_text())
         connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
@@ -99,6 +99,7 @@ def bootstrap(admin_url, runtime_url, migrator_url, database="central_brain", re
         connection.execute("GRANT INSERT, UPDATE, DELETE ON central_brain.library_nodes,central_brain.library_versions,central_brain.library_sections,central_brain.library_suggestions TO central_brain_runtime")
         connection.execute("GRANT INSERT, UPDATE, DELETE ON central_brain.library_deletions TO central_brain_runtime")
         connection.execute("GRANT INSERT, DELETE ON central_brain.transfer_reservations TO central_brain_runtime")
+        connection.execute("GRANT UPDATE(size_bytes) ON central_brain.transfer_reservations TO central_brain_runtime")
         with connection.transaction():
             seed_identity(connection, WORKSPACE, ACTOR, "Personal pilot")
     print(f"Applied core and pilot migrations to {database}; runtime privileges are restricted.")

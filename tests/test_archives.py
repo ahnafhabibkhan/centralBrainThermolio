@@ -95,7 +95,9 @@ def test_archive_originals_folder_context_and_duplicate(pilot, library):
     assert '/Brand/Thermolio/Logo/follow-up.md' in [n['path'] for n in library.snapshot(assistant)]
     with library.repo._connection(pilot.auth) as c:
         payload = c.execute('SELECT payload FROM central_brain.library_suggestions WHERE id=%s', (proposal['id'],)).fetchone()['payload']
-    assert 'files' not in payload and 'summary' not in payload
+    assert 'summary' not in payload and 'source' not in payload
+    assert [item['name'] for item in payload['files']] == ['logo.svg', 'logo.png']
+    assert all(set(item) <= {'name', 'size_bytes', 'sha256', 'received'} for item in payload['files'])
 
 
 def test_connector_preserves_reported_large_markdown_original(pilot, library):
@@ -167,17 +169,18 @@ def test_archive_limits_privacy_conflicts_and_web_batch(pilot, library):
         propose_archive(library, pilot.auth, 'Assets', 'Summary', 'Source', [ArchiveFile(name='a.svg', content='bad base64!', encoding='base64')])
     with pytest.raises(HTTPException):
         propose_archive(library, pilot.auth, 'Assets', 'Summary', 'Source', [ArchiveFile(name='summary.md', content='Duplicate')])
-    private_auth = AuthContext(pilot.auth.principal.model_copy(update={'actor_id': uuid4()}))
+    private_auth = AuthContext(pilot.auth.principal.model_copy(
+        update={'actor_id': uuid4(), 'roles': {'reader', 'writer'}}))
     proposal = propose_archive(library, pilot.auth, 'Assets', 'Summary <script>bad()</script>', 'Source', [ArchiveFile(name='logo.svg', content=SVG)])
     with pytest.raises(HTTPException):
         selection(library, private_auth, [('suggestion', proposal['id'])])
     client = pilot.client
     login_csrf = re.search(r'name="csrf_token" value="([^"]+)"', client.get('/login').text)[1]
     assert client.post('/login', data={'token':'owner','csrf_token':login_csrf}, follow_redirects=False).status_code == 303
-    page = client.get('/library').text
-    import html
+    response = client.get('/library')
+    page = response.text
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
-    items = html.unescape(re.search(r'name="items" value="([^"]+)"', page)[1])
+    items = json.dumps(response.context['approval_items'])
     preview = client.get(f"/library/suggestions/{proposal['id']}")
     assert '<script>bad()</script>' not in preview.text
     download = client.get(f"/library/suggestions/{proposal['id']}/files/-1/download")
@@ -189,7 +192,13 @@ def test_archive_limits_privacy_conflicts_and_web_batch(pilot, library):
     assert result.status_code == 200
     assert 'No items are waiting' in result.text
     assert '/Assets/logo.svg' in [n['path'] for n in library.snapshot(pilot.auth)]
+    summary_id = next(n['id'] for n in library.snapshot(pilot.auth)
+                      if n['path'] == '/Assets/summary.md')
     second = propose_archive(library, pilot.auth, 'Assets', 'Other summary', 'Source', [], True)
-    with pytest.raises(HTTPException) as error:
-        approve_batch(library, pilot.auth, selection(library, pilot.auth, [('suggestion', second['id'])]))
-    assert error.value.status_code == 409
+    assert approve_batch(library, pilot.auth,
+                         selection(library, pilot.auth, [('suggestion', second['id'])])) == 1
+    assert len(library.info(pilot.auth, summary_id)['versions']) == 2
+    with library.download(pilot.auth, summary_id)[1] as stream:
+        assert stream.read() == b'Other summary'
+    with library.download(pilot.auth, summary_id, version=1)[1] as stream:
+        assert stream.read() == b'Summary <script>bad()</script>'

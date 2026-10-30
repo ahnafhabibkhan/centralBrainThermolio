@@ -7,7 +7,7 @@ from .library import filename
 def propose_note(library, auth, name, content, source_reference, parent=None):
     data = (content + '\n\nSource: ' + source_reference).encode()
     try:
-        node = library.upload(auth, name, data, parent, proposed=True)
+        node = library.upload(auth, name, data, parent, proposed=True, replace_pending=False)
         return {'file_id': str(node), 'status': 'proposed'}
     except HTTPException as error:
         if error.status_code != 409:

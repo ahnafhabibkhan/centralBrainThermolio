@@ -35,6 +35,7 @@ logger = logging.getLogger("central_brain")
 
 AUTH_RATE_LIMIT_PATHS = frozenset({"/login", "/logout", "/auth/login", "/auth/callback"})
 MIN_AUTH_REQUESTS_PER_MINUTE = 10
+MIN_LIBRARY_REVIEW_REQUESTS_PER_MINUTE = 60
 
 
 def trusted_proxy_hosts() -> tuple[str, ...]:
@@ -158,6 +159,13 @@ def create_app(repository=None, settings: Settings | None = None) -> FastAPI:
             # requests isolated so they neither consume nor inherit the page-traffic bucket.
             bucket_name = "library-upload"
             request_limit = max(request_limit, 600)
+        if request.method == "POST" and request.url.path in {
+            "/library/approve-all", "/library/review-selected",
+        }:
+            # Bulk review uses bounded groups. Page refreshes and context polling must
+            # neither consume this allowance nor be blocked by completed review groups.
+            bucket_name = "library-review"
+            request_limit = max(request_limit, MIN_LIBRARY_REVIEW_REQUESTS_PER_MINUTE)
         if bucket_name == "auth":
             # Leave enough room for the redirects and one recovery attempt in an OAuth flow.
             request_limit = max(request_limit, MIN_AUTH_REQUESTS_PER_MINUTE)

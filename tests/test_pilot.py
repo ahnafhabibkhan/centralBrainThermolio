@@ -287,6 +287,12 @@ def test_rate_limit_uses_forwarded_client_and_isolates_sign_in(pilot, monkeypatc
     for _ in range(3):
         assert first.post('/library/folders', data={}).status_code != 429
 
+    # Bulk approval also remains available when ordinary workspace traffic is limited.
+    for _ in range(3):
+        response = first.post('/library/approve-all', data={'items': '[]', 'csrf_token': 'x'})
+        assert response.status_code == 303
+        assert response.headers['location'] == '/login'
+
     # A different forwarded client has its own bucket, and unrelated workspace traffic
     # cannot prevent the original client from starting a sign-in.
     assert second.get('/').status_code == 303
@@ -310,6 +316,30 @@ def test_rate_limit_uses_forwarded_client_and_isolates_sign_in(pilot, monkeypatc
 
     first.close()
     second.close()
+
+
+def test_bulk_review_has_a_bounded_independent_rate_limit(pilot, monkeypatch):
+    elapsed = [1_000.0]
+    monkeypatch.setattr('central_brain.api.monotonic', lambda: elapsed[0])
+    monkeypatch.setattr('central_brain.api.MIN_LIBRARY_REVIEW_REQUESTS_PER_MINUTE', 3)
+    app = create_app(pilot.repo, production_settings(pilot, requests_per_minute=2))
+    with TestClient(app, base_url='https://brain.example', follow_redirects=False) as client:
+        for _ in range(3):
+            response = client.post('/library/approve-all', data={'items': '[]', 'csrf_token': 'x'})
+            # A separate rate bucket must not bypass the existing session requirement.
+            assert response.status_code == 303
+            assert response.headers['location'] == '/login'
+        limited = client.post('/library/approve-all', data={'items': '[]', 'csrf_token': 'x'})
+        assert limited.status_code == 429
+        assert int(limited.headers['Retry-After']) == 20
+        assert client.get('/').status_code == 303
+        assert client.get('/').status_code == 303
+        assert client.get('/').status_code == 429
+        assert client.post('/library/folders', data={}).status_code != 429
+        assert client.get('/login?signed_out=true').status_code == 200
+        elapsed[0] += 20
+        assert client.post('/library/approve-all',
+                           data={'items': '[]', 'csrf_token': 'x'}).status_code == 303
 
 
 def test_untrusted_client_cannot_spoof_rate_limit_identity(pilot, monkeypatch):

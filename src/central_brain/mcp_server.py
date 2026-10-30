@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import ImageContent, TextContent, ToolAnnotations
 
 from .archive_transfer import OriginalManifest
 from .archives import ArchiveFile, find_folders, propose_archive
@@ -109,6 +109,10 @@ def build_mcp(settings, repo):
             "Never claim to have copied chat attachments that were not transferred. "
             "Use search_library for questions about project documents, skills and memories. Search first, "
             "then read only relevant file sections. List folders when the destination is unclear. "
+            "For image files, call read_image to receive actual image pixels over this authenticated connection. "
+            "It supports JPEG, PNG, WebP and HEIC previews. Image placeholders in read_file_sections "
+            "do not mean that the original image is unavailable. Request a normalized crop for small bill "
+            "figures or equipment labels. Never claim to have inspected an image from its placeholder alone. "
             "Cite returned file paths, versions and locations. Extraction can be partial; never "
             "claim the whole file was read. Organization suggestions and proposed files require human approval."
         ),
@@ -324,6 +328,19 @@ def build_mcp(settings, repo):
         return library.info(current_auth.get(), UUID(file_id))
 
     @mcp.tool(annotations=readonly)
+    def read_image(file_id: str, version: int | None = None, max_edge: int = 1600,
+                   crop: list[float] | None = None) -> list[TextContent | ImageContent]:
+        """View an approved image as actual image content, including HEIC converted to JPEG.
+
+        Uses existing authenticated file permissions. Originals remain unchanged. max_edge is
+        512 to 2400 pixels. Optional crop is [left, top, right, bottom], each from 0 to 1,
+        relative to the upright original. Use crops to read small bill figures or equipment labels.
+        Call sequentially; if another preview is processing, retry shortly. Image files only.
+        """
+        from .image_access import read_image as image_content
+        return image_content(library, current_auth.get(), UUID(file_id), version, max_edge, crop)
+
+    @mcp.tool(annotations=readonly)
     def search_library(query: str, folder_id: str | None = None, limit: int = 8) -> dict:
         """Search current approved sections and filenames. Exact copies include alternative accessible paths."""
         from .retrieval import task_context
@@ -332,7 +349,11 @@ def build_mcp(settings, repo):
     @mcp.tool(annotations=readonly)
     def read_file_sections(file_id: str, version: int | None = None, start: int = 0, limit: int = 3) -> dict:
         """Read bounded sections with page, paragraph or spreadsheet row references. Follow next_section to read more."""
-        return library.read(current_auth.get(),UUID(file_id),version,start,limit)
+        result = library.read(current_auth.get(),UUID(file_id),version,start,limit)
+        if result.get("name", "").lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")):
+            result["image_access"] = {"tool": "read_image", "file_id": file_id,
+                                      "note": "Call read_image to inspect the actual image pixels."}
+        return result
 
     @mcp.tool(annotations=readonly)
     def read_spreadsheet_rows(file_id: str, sheet: str = '', first_row: int = 1, last_row: int = 20) -> dict:

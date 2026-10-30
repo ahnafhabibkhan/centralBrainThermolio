@@ -318,8 +318,8 @@ class Library:
             ).fetchall()
             return rows
 
-    def path(self, auth, node_id):
-        with self.repo._connection(auth) as c:
+    def path(self, auth, node_id, connection=None):
+        with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             parts = []
             current = node_id
             for _ in range(32):
@@ -330,9 +330,9 @@ class Library:
                 current = row["parent_id"]
             raise HTTPException(409, "Folder nesting limit exceeded.")
 
-    def info(self, auth, node_id, review=False):
+    def info(self, auth, node_id, review=False, connection=None):
         auth.require("reviewer" if review else "reader")
-        with self.repo._connection(auth) as c:
+        with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             row = self._get(c, auth, node_id, review)
             row["versions"] = c.execute(
                 "SELECT id,version,size,sha256,state,error,created_at FROM central_brain.library_versions "
@@ -345,7 +345,7 @@ class Library:
                     "AND location LIKE 'Sheet %%' AND location NOT LIKE '%%, row %%' ORDER BY ordinal",
                     (row['versions'][0]['id'],)).fetchall()
                 row['sheets']=[h['location'][6:] for h in headings]
-        row["path"] = self.path(auth, node_id)
+            row["path"] = self.path(auth, node_id, connection=c)
         return row
 
     def usage(self, auth):
@@ -622,7 +622,8 @@ class Library:
 
     def upload(
         self, auth, name, data, parent=None, node_id=None, proposed=False, visibility="workspace",
-        connection=None, stored_keys=None, reuse=False,
+        connection=None, stored_keys=None, reuse=False, source_created_at=None, source_upload_id=None,
+        replace_pending=True,
     ):
         auth.require("writer" if proposed else "reviewer")
         from .project_transfer import reserved_bytes
@@ -659,6 +660,22 @@ class Library:
                             and existing["size"] == len(data) and existing["sha256"] == digest):
                         return existing["id"]
                     raise HTTPException(409, "An existing item at this path has different content.")
+            pending_version = False
+            replacement = None
+            if proposed and replace_pending and not node_id:
+                existing = c.execute(
+                    "SELECT id,kind,status,visibility FROM central_brain.library_nodes "
+                    "WHERE parent_id IS NOT DISTINCT FROM %s AND lower(name)=lower(%s) "
+                    "AND status<>'rejected' ORDER BY status DESC LIMIT 1", (parent, name),
+                ).fetchone()
+                if existing:
+                    self._get(c, auth, existing['id'], True)
+                    if existing['kind'] != 'file' or existing['visibility'] != visibility:
+                        raise HTTPException(409, 'The destination conflicts with an existing item.')
+                    if existing['status'] == 'proposed':
+                        node_id, pending_version = existing['id'], True
+                    else:
+                        replacement = existing['id']
             used = c.execute(
                 "SELECT coalesce(sum(size),0) AS used FROM central_brain.library_versions"
             ).fetchone()["used"]
@@ -668,7 +685,7 @@ class Library:
             version = 1
             if node_id:
                 row = self._get(c, auth, node_id, True)
-                if proposed or row["kind"] != "file" or row["status"] != "active":
+                if row["kind"] != "file" or (row["status"] != "active" and not pending_version) or (proposed and not pending_version):
                     raise HTTPException(422, "Only reviewers can version an active file.")
                 if Path(name).suffix.lower() != Path(row["name"]).suffix.lower():
                     raise HTTPException(422, "A version must keep the original format.")
@@ -677,7 +694,8 @@ class Library:
                     (node_id,),
                 ).fetchone()["v"]
             else:
-                self._unique(c, parent, name)
+                if not replacement:
+                    self._unique(c, parent, name)
                 self._capacity(c)
                 node_id = uuid4()
                 c.execute(
@@ -694,8 +712,8 @@ class Library:
                     ),
                 )
             c.execute(
-                "INSERT INTO central_brain.library_versions(id,workspace_id,node_id,version,object_key,size,sha256) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO central_brain.library_versions(id,workspace_id,node_id,version,object_key,size,sha256,source_created_at,source_upload_id) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,coalesce(%s,clock_timestamp()),%s)",
                 (
                     version_id,
                     auth.principal.workspace_id,
@@ -704,6 +722,8 @@ class Library:
                     key,
                     len(data),
                     digest,
+                    source_created_at,
+                    source_upload_id or version_id,
                 ),
             )
             # Store while the quota reservation transaction is locked. Failed storage rolls it back.
@@ -711,6 +731,9 @@ class Library:
                 stored_keys.append(key)
             self.store.put(key, data)
             self._audit(c, auth, "file.propose" if proposed else "file.upload", node_id)
+            if source_created_at is None:
+                from .pending_uploads import reconcile_pending_uploads
+                reconcile_pending_uploads(self, auth, c)
         return node_id
 
     def download(self, auth, node_id, version=None):
@@ -733,9 +756,9 @@ class Library:
                 raise HTTPException(404, "Version not found.")
         return row["name"], self.store.get(v["object_key"])
 
-    def read(self, auth, node_id, version=None, start=0, limit=3, review=False):
+    def read(self, auth, node_id, version=None, start=0, limit=3, review=False, connection=None):
         auth.require("reviewer" if review else "reader")
-        with self.repo._connection(auth) as c:
+        with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             row = self._get(c, auth, node_id, review)
             if row["kind"] == "memory":
                 m = self.repo._get(c, auth, row["memory_id"])
@@ -810,13 +833,43 @@ class Library:
             self._audit(c, auth, "organization.propose", sid)
         return {"id": sid, "status": "proposed"}
 
-    def review(self, auth, node_id, approve, connection=None):
+    def review(self, auth, node_id, approve, connection=None, reconcile=True):
         auth.require("reviewer")
         with nullcontext(connection) if connection else self.repo._connection(auth) as c:
             self._lock(c, auth)
+            if reconcile:
+                from .pending_uploads import reconcile_pending_uploads
+                reconcile_pending_uploads(self, auth, c)
             row = self._get(c, auth, node_id, True)
             if row["status"] != "proposed":
                 raise HTTPException(409, "Only pending files can be reviewed.")
+            if approve and row['kind'] == 'file':
+                existing = c.execute(
+                    "SELECT id,kind,visibility FROM central_brain.library_nodes "
+                    "WHERE parent_id IS NOT DISTINCT FROM %s AND lower(name)=lower(%s) "
+                    "AND status='active' AND id<>%s", (row['parent_id'], row['name'], node_id),
+                ).fetchone()
+                if existing:
+                    self._get(c, auth, existing['id'])
+                    if existing['kind'] != 'file' or existing['visibility'] != row['visibility']:
+                        raise HTTPException(409, 'The destination conflicts with an existing item.')
+                    version = c.execute('SELECT * FROM central_brain.library_versions WHERE node_id=%s '
+                                        'ORDER BY version DESC LIMIT 1', (node_id,)).fetchone()
+                    current = c.execute('SELECT size,sha256 FROM central_brain.library_versions WHERE node_id=%s '
+                                        'ORDER BY version DESC LIMIT 1', (existing['id'],)).fetchone()
+                    if not current or current['size'] != version['size'] or current['sha256'] != version['sha256']:
+                        # Move the checksum-bound version, preserving the active file's identity and history.
+                        next_version = c.execute('SELECT coalesce(max(version),0)+1 AS n FROM central_brain.library_versions '
+                                                 'WHERE node_id=%s', (existing['id'],)).fetchone()['n']
+                        c.execute('UPDATE central_brain.library_versions SET node_id=%s,version=%s WHERE id=%s',
+                                  (existing['id'], next_version, version['id']))
+                    else:
+                        c.execute('UPDATE central_brain.library_versions SET source_created_at=%s,source_upload_id=%s '
+                                  'WHERE node_id=%s AND version=(SELECT max(version) FROM central_brain.library_versions WHERE node_id=%s)',
+                                  (version['source_created_at'], version['source_upload_id'], existing['id'], existing['id']))
+                    c.execute("UPDATE central_brain.library_nodes SET status='rejected' WHERE id=%s", (node_id,))
+                    self._audit(c, auth, 'file.approve', node_id, {'replacement_node_id': str(existing['id'])})
+                    return
             c.execute(
                 "UPDATE central_brain.library_nodes SET status=%s WHERE id=%s",
                 ("active" if approve else "rejected", node_id),

@@ -4,16 +4,17 @@ import base64
 import hashlib
 import json
 import re
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
-from contextlib import nullcontext
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
 from psycopg.types.json import Jsonb
+from pydantic import BaseModel, ConfigDict, Field
 
 from .library import EXTENSIONS, filename
+from .pending_uploads import reconcile_pending_uploads
 
 
 class ArchiveFile(BaseModel):
@@ -56,7 +57,7 @@ def find_folders(library, auth, category):
 
 
 def propose_archive(library, auth, folder_path, summary, source_reference, files, destination_confirmed=False,
-                    summary_filename='summary.md', connection=None):
+                    summary_filename='summary.md', connection=None, fingerprint_inventory=None):
     auth.require("writer")
     parts = folder_parts(folder_path)
     if parts[0].lower() == "memories":
@@ -84,10 +85,14 @@ def propose_archive(library, auth, folder_path, summary, source_reference, files
         return {"status": "needs_destination_confirmation", "requested_path": payload["folder_path"],
                 **candidates, "stored": False}
     payload["existing_folders"] = candidates["matches"]
-    payload["destination_ancestors"] = [n['id'] for n in candidates['matches']
-                                        if payload['folder_path'].lower() == n['path'].lower()
-                                        or payload['folder_path'].lower().startswith(n['path'].lower() + '/')]
-    fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    payload["destination_ancestors"] = [
+        str(n['id']) for n in library.snapshot(auth)
+        if n['kind'] == 'folder' and (
+            payload['folder_path'].lower() == n['path'].lower()
+            or payload['folder_path'].lower().startswith(n['path'].lower() + '/'))
+    ]
+    identity = payload if fingerprint_inventory is None else {**payload, 'transfer_inventory': fingerprint_inventory}
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     with nullcontext(connection) if connection else library.repo._connection(auth) as c:
         library._lock(c, auth)
         old = c.execute("SELECT id,status FROM central_brain.library_suggestions WHERE action='archive' "
@@ -104,6 +109,8 @@ def propose_archive(library, auth, folder_path, summary, source_reference, files
                   "VALUES(%s,%s,%s,'archive',%s)",
                   (sid, auth.principal.workspace_id, auth.principal.actor_id, Jsonb(payload)))
         library._audit(c, auth, "archive.propose", sid)
+        if fingerprint_inventory is None:
+            reconcile_pending_uploads(library, auth, c)
     return {"id": sid, "status": "proposed", "path": payload["folder_path"],
             "files": [summary_filename, source_filename] + [f.name for f in files],
             "instruction": "The folder and listed files will be created together after human approval. Only listed originals were transferred."}
@@ -111,75 +118,25 @@ def propose_archive(library, auth, folder_path, summary, source_reference, files
 
 def review_suggestion(library, auth, sid, approve, c, stored_keys):
     auth.require("reviewer")
-    row = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed' FOR UPDATE", (sid, auth.principal.actor_id)).fetchone()
+    row = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND status='proposed' FOR UPDATE", (sid,)).fetchone()
     if not row:
         raise HTTPException(409, "This suggestion is no longer awaiting approval.")
     p = row["payload"]
-    if row['action'] == 'archive' and p.get('reviews'):
+    if row['action'] == 'archive':
         from .archive_review import entries, review
-        pending = [e for e in entries(p) if e['state'] == 'pending']
+        reconcile_pending_uploads(library, auth, c)
+        row = c.execute("SELECT payload,status FROM central_brain.library_suggestions WHERE id=%s", (sid,)).fetchone()
+        if row['status'] != 'proposed':
+            raise HTTPException(409, 'This archive is no longer awaiting review.')
+        pending = [e for e in entries(row['payload']) if e['state'] == 'pending']
         if approve and any(not e['ready'] for e in pending):
             raise HTTPException(409, 'Some originals have not arrived. Complete their uploads first.')
         for e in pending:
-            review(library, auth, sid, e['index'], approve, c, stored_keys)
+            review(library, auth, sid, e['index'], approve, c, stored_keys, reconcile=False)
         return
     if approve:
-        if p.get('transfer_inventory'):
-            if any(not f['received'] for f in p['files']):
-                raise HTTPException(409, 'Some originals have not arrived. Complete the transfer before approving.')
-            # Release this reservation inside the transaction as files become library versions.
-            p['reserved_bytes'] = 0
-            c.execute('DELETE FROM central_brain.transfer_reservations WHERE id=%s', (sid,))
-            c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), sid))
         parent = UUID(p["parent_id"]) if p.get("parent_id") else None
-        if row["action"] == "archive":
-            for ancestor_id in p.get('destination_ancestors', []):
-                library._get(c, auth, UUID(ancestor_id))
-            for part in folder_parts(p["folder_path"]):
-                existing = c.execute("SELECT id,kind,visibility,sensitivity FROM central_brain.library_nodes WHERE parent_id IS NOT DISTINCT FROM %s "
-                                     "AND lower(name)=lower(%s) AND status='active'", (parent, part)).fetchone()
-                if existing:
-                    library._get(c, auth, existing["id"])
-                    if existing["kind"] != "folder" or existing["visibility"] != "workspace":
-                        raise HTTPException(409, "The archive path conflicts with an existing item. Choose a shared folder.")
-                    parent = existing["id"]
-                else:
-                    parent = library.folder(auth, part, parent, connection=c)
-            originals = [] if p.get('transfer_inventory') else [ArchiveFile.model_validate(f) for f in p["files"]]
-            manifest = "# Conversation source\n\n" + p["source_reference"] + "\n\n## Transferred originals\n\n"
-            for item in originals:
-                data = item.data()
-                manifest += f"- {item.name}: {len(data)} bytes; SHA-256 {hashlib.sha256(data).hexdigest()}.\n"
-            if p.get('transfer_inventory'):
-                for item in p['files']:
-                    manifest += f"- {item['name']}: {item['size_bytes']} bytes; SHA-256 {item['sha256']}.\n"
-            if not originals and not p.get('transfer_inventory'):
-                manifest += "No original attachments were transferred.\n"
-            entries = [(p.get('summary_filename', 'summary.md'), p["summary"].encode()),
-                       (p.get('source_filename', 'source.md'), manifest.encode())]
-            entries += [(item.name, item.data()) for item in originals]
-            for name, data in entries:
-                library.upload(auth, name, data, parent, connection=c, stored_keys=stored_keys)
-            if p.get('transfer_inventory'):
-                for item in p['files']:
-                    destination = parent
-                    path = folder_parts(item['name'])
-                    for part in path[:-1]:
-                        existing = c.execute("SELECT id,kind,visibility FROM central_brain.library_nodes WHERE parent_id=%s "
-                                             "AND lower(name)=lower(%s) AND status='active'", (destination, part)).fetchone()
-                        if existing:
-                            library._get(c, auth, existing['id'])
-                            if existing['kind'] != 'folder' or existing['visibility'] != 'workspace':
-                                raise HTTPException(409, 'An original path conflicts with an existing item.')
-                            destination = existing['id']
-                        else:
-                            destination = library.folder(auth, part, destination, connection=c)
-                    with library.store.get(item['object_key']) as stream:
-                        data = stream.read(library.settings.library_file_bytes + 1)
-                    if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
-                        raise HTTPException(409, 'A staged original failed its integrity check.')
-                    library.upload(auth, path[-1], data, destination, connection=c, stored_keys=stored_keys)
-        elif row["action"] == "folder":
+        if row["action"] == "folder":
             existing = c.execute("SELECT id FROM central_brain.library_nodes WHERE kind='folder' AND status='active' "
                                  "AND parent_id IS NOT DISTINCT FROM %s AND lower(name)=lower(%s)", (parent, p["name"])).fetchone()
             if existing:
@@ -206,9 +163,11 @@ def review_suggestion(library, auth, sid, approve, c, stored_keys):
     library._audit(c, auth, "organization." + action, sid)
 
 
-def approval_item(library, auth, c, kind, node_id, index=None):
+def approval_item(library, auth, c, kind, node_id, index=None, require_ready=True, reconcile=True):
+    if reconcile:
+        reconcile_pending_uploads(library, auth, c)
     if kind in {"suggestion", "archive_file"}:
-        row = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s AND status='proposed' FOR UPDATE", (node_id, auth.principal.actor_id)).fetchone()
+        row = c.execute("SELECT * FROM central_brain.library_suggestions WHERE id=%s AND status='proposed' FOR UPDATE", (node_id,)).fetchone()
         if not row:
             raise HTTPException(409, "The approval queue changed. Refresh and review it again.")
         value = dict(row)
@@ -217,7 +176,7 @@ def approval_item(library, auth, c, kind, node_id, index=None):
             if row['action'] != 'archive':
                 raise HTTPException(409, 'This is not an archive.')
             e = entry(row['payload'], index)
-            if e['state'] != 'pending' or not e['ready']:
+            if e['state'] != 'pending' or (require_ready and not e['ready']):
                 raise HTTPException(409, 'This file is not ready for approval.')
             value = {'file': {k:v for k,v in e.items() if k != 'data'},
                      'path': row['payload']['folder_path'], 'ancestors': row['payload'].get('destination_ancestors', [])}
@@ -240,31 +199,32 @@ def approval_item(library, auth, c, kind, node_id, index=None):
     return result
 
 
-def approve_batch(library, auth, items):
+def review_batch(library, auth, items, approve=True):
     auth.require("reviewer")
     if not 1 <= len(items) <= 150 or len({(i['kind'], i['id'], i.get('index')) for i in items}) != len(items):
         raise HTTPException(422, "Choose between 1 and 150 distinct pending approvals.")
     stored_keys = []
     try:
         with library.repo._connection(auth) as c:
-            library._lock(c, auth)
+            reconcile_pending_uploads(library, auth, c)
             for item in sorted(items, key=lambda i: i["id"]):
-                current = approval_item(library, auth, c, item["kind"], UUID(item["id"]), item.get('index'))
+                current = approval_item(library, auth, c, item["kind"], UUID(item["id"]), item.get('index'),
+                                        require_ready=approve, reconcile=False)
                 if current != item:
                     raise HTTPException(409, "A proposal changed. Refresh and review the queue before approving it.")
             for item in items:
                 node_id = UUID(item["id"])
                 if item['kind'] == 'archive_file':
                     from .archive_review import review
-                    review(library, auth, node_id, item['index'], True, c, stored_keys)
+                    review(library, auth, node_id, item['index'], approve, c, stored_keys, reconcile=False)
                 elif item["kind"] == "suggestion":
-                    review_suggestion(library, auth, node_id, True, c, stored_keys)
+                    review_suggestion(library, auth, node_id, approve, c, stored_keys)
                 else:
                     node = library._get(c, auth, node_id, True)
                     if node["kind"] == "memory":
-                        library.repo.transition(auth, node["memory_id"], "approve", connection=c)
+                        library.repo.transition(auth, node["memory_id"], "approve" if approve else "reject", connection=c)
                     else:
-                        library.review(auth, node_id, True, connection=c)
+                        library.review(auth, node_id, approve, connection=c, reconcile=False)
     except Exception:
         for key in stored_keys:
             try:
@@ -273,3 +233,7 @@ def approve_batch(library, auth, items):
                 pass
         raise
     return len(items)
+
+
+def approve_batch(library, auth, items):
+    return review_batch(library, auth, items, approve=True)

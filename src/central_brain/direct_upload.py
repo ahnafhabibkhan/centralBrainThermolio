@@ -21,8 +21,8 @@ def prepare(library, auth, archive_id, file_index):
         if not 0 <= file_index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][file_index]
-        if p.get('reviews', {}).get(str(file_index)) == 'rejected':
-            raise HTTPException(409, 'This original was rejected.')
+        if p.get('reviews', {}).get(str(file_index)) in {'rejected', 'superseded'}:
+            raise HTTPException(409, 'This original was rejected or superseded by a newer upload.')
         if f['received'] and original_intact(library, f):
             return {'received': True, 'name': f['name']}
         expiry = min(600, p['transfer_expires'] - int(time.time()))
@@ -59,8 +59,8 @@ def complete(library, auth, archive_id, file_index):
         if not 0 <= file_index < len(p['files']):
             raise HTTPException(404, 'Original not found.')
         f = p['files'][file_index]
-        if p.get('reviews', {}).get(str(file_index)) == 'rejected':
-            raise HTTPException(409, 'This original was rejected.')
+        if p.get('reviews', {}).get(str(file_index)) in {'rejected', 'superseded'}:
+            raise HTTPException(409, 'This original was rejected or superseded by a newer upload.')
         if f['received'] and original_intact(library, f):
             return {'received': True, 'duplicate': True, 'name': f['name']}
         if int(time.time()) >= p['transfer_expires']:

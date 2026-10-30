@@ -23,6 +23,8 @@ dependencies = [
   "pypdf>=6,<7",
   "openpyxl>=3.1,<4",
   "defusedxml>=0.7,<1",
+  "Pillow>=12.3,<13",
+  "pillow-heif>=1.8,<2",
 ]
 
 [project.optional-dependencies]

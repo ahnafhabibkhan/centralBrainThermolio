@@ -11,6 +11,8 @@
   let dirty = false;
   let detailResource = null;
   let queueFilter = 'ready';
+  let reviewingSelection = false;
+  const reviewSelections = new Map();
   const parser = new DOMParser();
   const fileSelections = new WeakMap();
   const folderSelections = new WeakMap();
@@ -31,9 +33,74 @@
     });
     panel.querySelector('.approval-count').textContent = rows.length;
     panel.querySelector('[data-queue-empty]').hidden = rows.some(row => !row.hidden);
-    panel.querySelector('.bulk-approval').hidden = queueFilter === 'upload';
+    syncReviewSelection(panel);
     const recovery = panel.querySelector('[data-batch-recovery]');
     if (recovery) recovery.hidden = queueFilter === 'ready';
+  }
+  const reviewKey = item => `${item.kind}:${item.id}:${item.index ?? ''}`;
+  function reviewInventory(panel) {
+    return new Map(JSON.parse(panel.querySelector('.bulk-review').dataset.reviewItems)
+      .map(item => [reviewKey(item), item]));
+  }
+  function selectedReviewItems(panel, action = 'reject') {
+    const inventory = reviewInventory(panel);
+    return [...panel.querySelectorAll('[data-review-key]')].filter(row => !row.hidden
+      && (action !== 'approve' || row.dataset.reviewState === 'ready'))
+      .map(row => inventory.get(row.dataset.reviewKey))
+      .filter(item => item && reviewSelections.get(reviewKey(item)) === item.fingerprint);
+  }
+  function syncReviewSelection(panel = document.getElementById('approvals')) {
+    const inventory = reviewInventory(panel);
+    const rows = [...panel.querySelectorAll('[data-review-key]')];
+    const visible = rows.filter(row => !row.hidden && inventory.has(row.dataset.reviewKey));
+    const visibleKeys = new Set(visible.map(row => row.dataset.reviewKey));
+    for (const [key, fingerprint] of reviewSelections) {
+      if (!visibleKeys.has(key) || inventory.get(key)?.fingerprint !== fingerprint) reviewSelections.delete(key);
+    }
+    rows.forEach(row => {
+      const checkbox = row.querySelector('[data-review-select]');
+      checkbox.checked = reviewSelections.has(row.dataset.reviewKey);
+      checkbox.disabled = reviewingSelection || !inventory.has(row.dataset.reviewKey);
+    });
+    const chosen = selectedReviewItems(panel);
+    const ready = selectedReviewItems(panel, 'approve');
+    const all = panel.querySelector('[data-review-select-all]');
+    all.checked = visible.length > 0 && chosen.length === visible.length;
+    all.indeterminate = chosen.length > 0 && chosen.length < visible.length;
+    all.disabled = reviewingSelection || !visible.length;
+    const count = panel.querySelector('[data-review-selection-count]');
+    count.textContent = `${chosen.length} ${chosen.length === 1 ? 'item is' : 'items are'} selected in this view.`;
+    if (chosen.length > ready.length) {
+      const missing = chosen.length - ready.length;
+      count.textContent += ` ${missing} selected ${missing === 1 ? 'item still needs its original file and can' : 'items still need their original files and can'} only be rejected.`;
+    }
+    for (const [action, count] of [['approve', ready.length], ['reject', chosen.length]]) {
+      const button = panel.querySelector(`[data-review-action="${action}"]`);
+      button.disabled = reviewingSelection || !count;
+      button.textContent = `${action === 'approve' ? 'Approve' : 'Reject'} selected${count ? ` (${count})` : ''}`;
+    }
+    panel.querySelector('.bulk-review').elements.items.value = JSON.stringify(chosen);
+  }
+  function changeReviewSelection(input) {
+    const panel = document.getElementById('approvals');
+    if (reviewingSelection) { syncReviewSelection(panel); return; }
+    const inventory = reviewInventory(panel);
+    const rows = input.matches('[data-review-select-all]')
+      ? [...panel.querySelectorAll('[data-review-key]')].filter(row => !row.hidden)
+      : [input.closest('[data-review-key]')];
+    rows.forEach(row => {
+      const item = inventory.get(row.dataset.reviewKey);
+      if (!item || row.hidden) return;
+      if (input.checked) reviewSelections.set(reviewKey(item), item.fingerprint);
+      else reviewSelections.delete(reviewKey(item));
+    });
+    syncReviewSelection(panel);
+  }
+  function retryAfterMilliseconds(value) {
+    const seconds = value?.trim() ? Number(value) : NaN;
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, Math.ceil(seconds * 1000));
+    const date = Date.parse(value);
+    return Number.isFinite(date) ? Math.max(1000, date - Date.now()) : 2000;
   }
   async function postJSON(url, data, options = {}) {
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -55,13 +122,16 @@
         continue;
       }
       if (response.status === 429) {
-        const delay = Number(response.headers.get('Retry-After'));
-        throw new Error(`Too many requests. ${Number.isFinite(delay) && delay > 0 ? `Wait ${delay} seconds, then` : 'Please'} refresh the queue before retrying.`);
+        const delay = retryAfterMilliseconds(response.headers.get('Retry-After'));
+        const error = new Error(`Too many requests. Wait ${Math.ceil(delay / 1000)} seconds, then refresh the queue before retrying.`);
+        error.status = 429;
+        error.retryAfterMilliseconds = delay;
+        throw error;
       }
       let result;
       try { result = await response.json(); }
       catch (_) {
-        throw new Error('The server did not confirm the result. Refresh the queue to check completed uploads and approvals before retrying.');
+        throw new Error('The server did not confirm the result. Refresh the queue to check completed uploads and reviews before retrying.');
       }
       if (!response.ok) {
         const error = new Error(typeof result.detail === 'string' ? result.detail : 'The request could not be completed.');
@@ -69,6 +139,21 @@
         throw error;
       }
       return result;
+    }
+  }
+  async function postApprovalBatch(data, onWait, url = '/library/approve-all') {
+    // A 429 is returned before review runs. Other failures may follow a committed
+    // transaction, so only a confirmed 429 can safely repeat this exact selection.
+    for (let retry = 0; ; retry++) {
+      try { return await postJSON(url, data); }
+      catch (error) {
+        if (error.status !== 429 || retry >= 5 || error.retryAfterMilliseconds > 300000) throw error;
+        const deadline = Date.now() + error.retryAfterMilliseconds;
+        for (let remaining = error.retryAfterMilliseconds; remaining > 0; remaining = deadline - Date.now()) {
+          onWait(Math.ceil(remaining / 1000));
+          await new Promise(resolve => setTimeout(resolve, Math.min(remaining, 1000)));
+        }
+      }
     }
   }
   function formatBytes(value) {
@@ -295,39 +380,50 @@
       controls.forEach(control => { control.disabled = false; });
     }
   }
-  async function approveQueue(form) {
-    if (busy) return;
-    busy = true;
+  async function reviewQueue(form, action) {
+    if (busy || !['approve', 'reject'].includes(action)) return;
     const panel = document.getElementById('approvals');
-    const buttons = [...panel.querySelectorAll('form button')];
-    buttons.forEach(button => { button.disabled = true; });
+    const items = selectedReviewItems(panel, action);
+    if (!items.length) return;
+    busy = true;
+    reviewingSelection = true;
+    const controls = [...panel.querySelectorAll('button, input')];
+    const disabledBefore = controls.map(control => control.disabled);
+    controls.forEach(control => { control.disabled = true; });
     const progress = panel.querySelector('[data-queue-progress]');
     const notice = panel.querySelector('[data-queue-status]');
+    const completedAction = action === 'approve' ? 'approved' : 'rejected';
+    const operation = action === 'approve' ? 'Approval' : 'Rejection';
+    const confirmations = action === 'approve' ? 'approvals' : 'rejections';
     let completed = 0;
     let outcome;
     const conflicts = [];
-    const approvedKeys = new Set();
+    const completedKeys = new Set();
     try {
-      const items = JSON.parse(form.elements.items.value);
       progress.max = items.length;
       progress.value = 0;
       progress.hidden = false;
-      const key = item => `${item.kind}:${item.id}:${item.index ?? ''}`;
       async function submit(batch) {
         const data = new FormData();
         data.set('csrf_token', form.elements.csrf_token.value);
         data.set('items', JSON.stringify(batch));
-        const result = await postJSON('/library/approve-all', data);
-        completed += result.approved;
-        batch.forEach(item => approvedKeys.add(key(item)));
+        data.set('action', action);
+        const result = await postApprovalBatch(data, seconds => {
+          notice.textContent = `The server confirmed ${completed} ${confirmations}. Traffic protection paused the next group. ${operation} will continue automatically in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
+        }, '/library/review-selected');
+        if (result[completedAction] !== batch.length) {
+          throw new Error('The server did not confirm the complete group. Refresh the queue to check its status before retrying.');
+        }
+        completed += result[completedAction];
+        progress.value = completed;
+        batch.forEach(item => { completedKeys.add(reviewKey(item)); reviewSelections.delete(reviewKey(item)); });
         panel.querySelectorAll('[data-review-key]').forEach(row => {
-          if (approvedKeys.has(row.dataset.reviewKey)) row.remove();
+          if (completedKeys.has(row.dataset.reviewKey)) row.remove();
         });
-        form.elements.items.value = JSON.stringify(items.filter(item => !approvedKeys.has(key(item))));
         filterQueue();
       }
       for (let start = 0; start < items.length; start += 3) {
-        notice.textContent = `Approving items ${start + 1} to ${Math.min(start + 3, items.length)} of ${items.length}. ${completed} approved.`;
+        notice.textContent = `The server is ${action === 'approve' ? 'approving' : 'rejecting'} selected items ${start + 1} to ${Math.min(start + 3, items.length)} of ${items.length}. The server confirmed ${completed} ${confirmations}.`;
         const batch = items.slice(start, start + 3);
         try { await submit(batch); }
         catch (error) {
@@ -337,24 +433,29 @@
             try { await submit([item]); }
             catch (itemError) {
               if (![409, 422].includes(itemError.status)) throw itemError;
-              const row = [...panel.querySelectorAll('[data-review-key]')].find(row => row.dataset.reviewKey === key(item));
-              const name = row?.querySelector('td')?.firstChild?.textContent?.trim() || 'A proposal';
+              const row = [...panel.querySelectorAll('[data-review-key]')].find(row => row.dataset.reviewKey === reviewKey(item));
+              const name = row?.querySelector('[data-review-name]')?.textContent?.trim() || 'A proposal';
               conflicts.push(`${name}: ${itemError.message}`);
             }
           }
         }
-        progress.value = Math.min(start + 3, items.length);
       }
-      outcome = `${completed} items approved. The workspace context has been updated.`;
-      if (conflicts.length) outcome += ` ${conflicts.length} items still need attention. ${conflicts.slice(0, 5).join(' ')}`;
+      outcome = `${completed} ${completed === 1 ? 'item was' : 'items were'} ${completedAction}. The workspace context has been updated.`;
+      if (conflicts.length) outcome += ` ${conflicts.length} ${conflicts.length === 1 ? 'item still needs' : 'items still need'} attention. ${conflicts.slice(0, 5).join(' ')}`;
     } catch (error) {
-      outcome = `${completed} approvals confirmed. ${error.message} Completed approvals are preserved. Check the refreshed queue before retrying.`;
+      outcome = `The server confirmed ${completed} ${confirmations}. ${error.message} Completed reviews are preserved. Check the refreshed queue before retrying.`;
     } finally {
       try { await refresh(true); }
       catch (_) { outcome += ' Reload the workspace to check the latest status before continuing.'; }
       busy = false;
-      buttons.forEach(button => { button.disabled = false; });
+      reviewingSelection = false;
+      controls.forEach((control, index) => { control.disabled = disabledBefore[index]; });
       document.querySelector('[data-queue-status]').textContent = outcome;
+      const finalProgress = document.querySelector('[data-queue-progress]');
+      finalProgress.max = progress.max;
+      finalProgress.value = completed;
+      finalProgress.hidden = false;
+      syncReviewSelection();
     }
   }
   async function uploadQueue(form) {
@@ -467,7 +568,12 @@
     // Capture the latest disclosure state, including clicks while the fetch was pending.
     const open = new Set([...document.querySelectorAll('#folder-tree .tree-branch.expanded')].map(d => d.dataset.treeId));
     const focusedToggle = document.activeElement?.closest('.tree-toggle')?.closest('.tree-branch')?.dataset.treeId;
+    const queueStatus = document.querySelector('[data-queue-status]').textContent;
+    const queueProgress = document.querySelector('[data-queue-progress]');
+    const progressState = {max: queueProgress.max, value: queueProgress.value, hidden: queueProgress.hidden};
     for (const id of ['approvals', 'context-strip', 'folder-tree']) replaceRegion(id, doc);
+    document.querySelector('[data-queue-status]').textContent = queueStatus;
+    Object.assign(document.querySelector('[data-queue-progress]'), progressState);
     if (!dirty) replaceRegion('library-actions', doc);
     filterQueue();
     document.querySelectorAll('#folder-tree .tree-branch').forEach(d => expandBranch(d, open.has(d.dataset.treeId)));
@@ -531,6 +637,10 @@
     if (event.target.closest('#folder-content form,#library-actions form')) dirty = true;
   });
   document.addEventListener('change', event => {
+    if (event.target.matches('[data-review-select],[data-review-select-all]')) {
+      changeReviewSelection(event.target);
+      return;
+    }
     if (event.target.matches('#file-parent')) updateFileTypes();
     const fileForm = event.target.closest('form[data-file-upload]');
     const folderForm = event.target.closest('form[data-folder-upload]');
@@ -581,6 +691,7 @@
   document.addEventListener('click', event => {
     const queueToggle = event.target.closest('[data-queue-filter]');
     if (queueToggle) {
+      if (reviewingSelection) return;
       queueFilter = queueToggle.dataset.queueFilter;
       filterQueue();
       return;
@@ -630,8 +741,8 @@
       await uploadQueue(form);
       return;
     }
-    if (form.matches('.bulk-approval')) {
-      await approveQueue(form);
+    if (form.matches('.bulk-review')) {
+      await reviewQueue(form, event.submitter?.value);
       return;
     }
     const submitter = event.submitter;

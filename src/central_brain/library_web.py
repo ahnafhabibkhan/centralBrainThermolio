@@ -5,7 +5,12 @@ from fastapi import File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
-from .archives import approval_item, approve_batch, review_suggestion
+from .archives import (
+    approval_item,
+    approve_batch,
+    reconcile_pending_uploads,
+    review_batch,
+)
 from .library import Library
 
 FOLDER_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
@@ -51,6 +56,8 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         offset: int = Query(0, ge=0, le=100000),
     ):
         auth = reviewer(request)
+        with repo._connection(auth) as c:
+            reconcile_pending_uploads(library, auth, c)
         library.project_memories(auth)
         roots, tree = library.workspace_folders(auth)
         snapshot = library.snapshot(auth, True)
@@ -71,8 +78,7 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         section = location["path"].strip("/").split("/")[0] if location else ""
         with repo._connection(auth) as c:
             suggestions = c.execute(
-                "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' AND created_by=%s ORDER BY created_at LIMIT 50",
-                (auth.principal.actor_id,),
+                "SELECT * FROM central_brain.library_suggestions WHERE status='proposed' ORDER BY created_at LIMIT 50",
             ).fetchall()
         suggestions = [dict(item) for item in suggestions]
         from .archive_review import entries
@@ -92,13 +98,43 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                 suggestion["destination"] = library.path(auth, UUID(parent_id)) if parent_id else "Workspace"
             except HTTPException:
                 suggestion["destination"] = "Destination unavailable"
-        pending_files = [row for row in snapshot if row['status'] == 'proposed'][:100]
+        pending_files = [row for row in snapshot if row['status'] == 'proposed']
         with repo._connection(auth) as c:
-            library._lock(c, auth)
-            approval_items = [approval_item(library, auth, c, 'suggestion', s['id']) for s in suggestions if s['ready'] and s['action'] != 'archive']
-            approval_items += [approval_item(library, auth, c, 'node', n['id']) for n in pending_files]
-            approval_items += [approval_item(library, auth, c, 'archive_file', e['archive_id'], e['index']) for e in archive_files if e['ready']]
-            approval_items = approval_items[:150]
+            reconcile_pending_uploads(library, auth, c)
+            candidates = [('node', n['id'], None, True) for n in pending_files]
+            candidates += [('suggestion', s['id'], None, s['ready']) for s in suggestions
+                           if s['action'] != 'archive']
+            candidates += [('archive_file', e['archive_id'], e['index'], e['ready'])
+                           for e in archive_files]
+            review_items, approval_items = [], []
+            for kind, node_id, index, ready in candidates:
+                if len(review_items) == 150:
+                    break
+                try:
+                    item = approval_item(library, auth, c, kind, node_id, index,
+                                         require_ready=False, reconcile=False)
+                except HTTPException as exc:
+                    # A concurrent review can remove a proposal after the hierarchy snapshot.
+                    if exc.status_code in {404, 409}:
+                        continue
+                    raise
+                review_items.append(item)
+                if ready:
+                    approval_items.append(item)
+        fingerprints = {(item['kind'], item['id'], item.get('index')): item['fingerprint']
+                        for item in review_items}
+        selected_keys = set(fingerprints)
+        pending_files = [n for n in pending_files if ('node', str(n['id']), None) in selected_keys]
+        suggestions = [s for s in suggestions if s['action'] != 'archive'
+                       and ('suggestion', str(s['id']), None) in selected_keys]
+        archive_files = [e for e in archive_files
+                         if ('archive_file', str(e['archive_id']), e['index']) in selected_keys]
+        for row in pending_files:
+            row['review_fingerprint'] = fingerprints[('node', str(row['id']), None)]
+        for suggestion in suggestions:
+            suggestion['review_fingerprint'] = fingerprints[('suggestion', str(suggestion['id']), None)]
+        for entry in archive_files:
+            entry['review_fingerprint'] = fingerprints[('archive_file', str(entry['archive_id']), entry['index'])]
         return page(
             request,
             "library.html",
@@ -119,11 +155,12 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
                                 for item in archive_files if not item["ready"]],
             pending_files=pending_files,
             approval_items=approval_items,
+            review_items=review_items,
+            review_queue_truncated=len(candidates) > len(review_items),
             folder_upload_limit=FOLDER_UPLOAD_BYTES,
         )
 
-    @app.post('/library/approve-all', include_in_schema=False)
-    def approve_all(request: Request, items: str = Form(...), csrf_token: str = Form(...)):
+    def parse_review_items(items):
         from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
         from typing import Literal
 
@@ -134,18 +171,33 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
             fingerprint: str
             index: int | None = None
 
-        auth = reviewer(request)
-        check_csrf(request, csrf_token)
         if len(items) > 40000:
             raise HTTPException(413, 'The approval selection is too large.')
         try:
             selected = TypeAdapter(list[Item]).validate_json(items)
         except (ValidationError, ValueError) as exc:
             raise HTTPException(422, 'Invalid approval selection.') from exc
-        count = approve_batch(library, auth, [item.model_dump(mode='json', exclude_none=True) for item in selected])
+        return [item.model_dump(mode='json', exclude_none=True) for item in selected]
+
+    @app.post('/library/approve-all', include_in_schema=False)
+    def approve_all(request: Request, items: str = Form(...), csrf_token: str = Form(...)):
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        count = approve_batch(library, auth, parse_review_items(items))
         if 'application/json' in request.headers.get('accept', ''):
             return JSONResponse({'approved': count}, headers={'Cache-Control': 'no-store'})
         return RedirectResponse('/library', 303)
+
+    @app.post('/library/review-selected', include_in_schema=False)
+    def review_selected(request: Request, items: str = Form(...), action: str = Form(...),
+                        csrf_token: str = Form(...)):
+        auth = reviewer(request)
+        check_csrf(request, csrf_token)
+        if action not in {'approve', 'reject'}:
+            raise HTTPException(422, 'Unknown review action.')
+        count = review_batch(library, auth, parse_review_items(items), approve=action == 'approve')
+        return JSONResponse({'approved' if action == 'approve' else 'rejected': count},
+                            headers={'Cache-Control': 'no-store'})
 
     @app.get('/library/suggestions/{suggestion_id}', include_in_schema=False)
     def suggestion_detail(request: Request, suggestion_id: UUID):
@@ -161,8 +213,8 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         from .archive_review import entry
         auth = reviewer(request)
         with repo._connection(auth) as c:
-            row = c.execute("SELECT payload FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s "
-                            "AND action='archive' AND status='proposed'", (suggestion_id, auth.principal.actor_id)).fetchone()
+            row = c.execute("SELECT payload FROM central_brain.library_suggestions WHERE id=%s "
+                            "AND action='archive' AND status='proposed'", (suggestion_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'File proposal not found.')
         item = entry(row['payload'], index)
@@ -181,20 +233,15 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
 
     @app.post('/library/suggestions/{suggestion_id}/files/{index}/review', include_in_schema=False)
     def review_archive_file(request: Request, suggestion_id: UUID, index: int,
-                            action: str = Form(...), csrf_token: str = Form(...)):
-        from .archive_review import review
+                            action: str = Form(...), csrf_token: str = Form(...),
+                            fingerprint: str = Form(...)):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
         if action not in {'approve', 'reject'}:
             raise HTTPException(422, 'Unknown review action.')
-        if action == 'approve':
-            with repo._connection(auth) as c:
-                item = approval_item(library, auth, c, 'archive_file', suggestion_id, index)
-            approve_batch(library, auth, [item])
-        else:
-            with repo._connection(auth) as c:
-                library._lock(c, auth)
-                review(library, auth, suggestion_id, index, False, c, [])
+        review_batch(library, auth, [{'kind': 'archive_file', 'id': str(suggestion_id),
+                                     'index': index, 'fingerprint': fingerprint}],
+                     approve=action == 'approve')
         if 'application/json' in request.headers.get('accept', ''):
             return JSONResponse({'status': 'approved' if action == 'approve' else 'rejected'})
         return RedirectResponse('/library', 303)
@@ -321,18 +368,25 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
         request: Request, node_id: UUID, version: int | None = None, start: int = Query(0, ge=0)
     ):
         auth = reviewer(request)
-        node = library.info(auth, node_id, True)
         _, folders = library.workspace_folders(auth)
+        with repo._connection(auth) as c:
+            library._lock(c, auth)
+            node = library.info(auth, node_id, True, connection=c)
+            preview = (library.read(auth, node_id, version, start, 3, True, connection=c)
+                       if node['kind'] != 'folder' else None)
+            review_fingerprint = None
+            if node['status'] == 'proposed' and (version is None or not node['versions']
+                                                 or version == node['versions'][0]['version']):
+                review_fingerprint = approval_item(library, auth, c, 'node', node_id)['fingerprint']
         return page(
             request,
             "file.html",
             title=node["name"],
             node=node,
             folders=folders,
+            review_fingerprint=review_fingerprint,
             copy_version=next((v for v in node['versions'] if version is None or v['version'] == version), None),
-            preview=library.read(auth, node_id, version, start, 3, True)
-            if node["kind"] != "folder"
-            else None,
+            preview=preview,
         )
 
     @app.get("/library/file/{node_id}/download", include_in_schema=False)
@@ -394,13 +448,15 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
 
     @app.post("/library/file/{node_id}/review", include_in_schema=False)
     def review(
-        request: Request, node_id: UUID, action: str = Form(...), csrf_token: str = Form(...)
+        request: Request, node_id: UUID, action: str = Form(...), csrf_token: str = Form(...),
+        fingerprint: str = Form(...),
     ):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
         if action not in {"approve", "reject"}:
             raise HTTPException(422, "Unknown review action.")
-        library.review(auth, node_id, action == "approve")
+        review_batch(library, auth, [{'kind': 'node', 'id': str(node_id),
+                                     'fingerprint': fingerprint}], approve=action == 'approve')
         return RedirectResponse("/library", 303)
 
     @app.post('/library/file/{node_id}/copy', include_in_schema=False)
@@ -413,20 +469,15 @@ def install_library_web(app, settings, repo, reviewer, page, check_csrf):
 
     @app.post("/library/suggestions/{suggestion_id}", include_in_schema=False)
     def organization(
-        request: Request, suggestion_id: UUID, action: str = Form(...), csrf_token: str = Form(...)
+        request: Request, suggestion_id: UUID, action: str = Form(...), csrf_token: str = Form(...),
+        fingerprint: str = Form(...),
     ):
         auth = reviewer(request)
         check_csrf(request, csrf_token)
         if action not in {"approve", "reject"}:
             raise HTTPException(422, "Unknown review action.")
-        if action == 'approve':
-            with repo._connection(auth) as c:
-                item = approval_item(library, auth, c, 'suggestion', suggestion_id)
-            approve_batch(library, auth, [item])
-        else:
-            with repo._connection(auth) as c:
-                library._lock(c, auth)
-                review_suggestion(library, auth, suggestion_id, False, c, [])
+        review_batch(library, auth, [{'kind': 'suggestion', 'id': str(suggestion_id),
+                                     'fingerprint': fingerprint}], approve=action == 'approve')
         if 'application/json' in request.headers.get('accept', ''):
             return JSONResponse({'status': 'approved' if action == 'approve' else 'rejected'},
                                 headers={'Cache-Control': 'no-store'})

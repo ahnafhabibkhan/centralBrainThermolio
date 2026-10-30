@@ -1,6 +1,7 @@
 """Independent review of originals and generated archive documents."""
 import hashlib
 from pathlib import PurePosixPath
+
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
@@ -31,12 +32,14 @@ def entry(p, index):
             'state': p.get('reviews', {}).get(str(index), 'pending')}
 
 
-def review(library, auth, sid, index, approve, c, stored_keys):
+def review(library, auth, sid, index, approve, c, stored_keys, reconcile=True):
     from .archives import folder_parts
-    from .project_transfer import queue_cleanup
+    from .pending_uploads import finish_archive, reconcile_pending_uploads
     auth.require('reviewer')
-    row = c.execute("SELECT payload FROM central_brain.library_suggestions WHERE id=%s AND created_by=%s "
-                    "AND action='archive' AND status='proposed' FOR UPDATE", (sid, auth.principal.actor_id)).fetchone()
+    if reconcile:
+        reconcile_pending_uploads(library, auth, c)
+    row = c.execute("SELECT payload,created_at FROM central_brain.library_suggestions WHERE id=%s "
+                    "AND action='archive' AND status='proposed' FOR UPDATE", (sid,)).fetchone()
     if not row:
         raise HTTPException(409, 'This archive is no longer awaiting review.')
     p = row['payload']
@@ -47,10 +50,11 @@ def review(library, auth, sid, index, approve, c, stored_keys):
         raise HTTPException(409, 'The original bytes have not arrived. Upload this file before approving it.')
     if index >= 0 and p.get('transfer_inventory'):
         p['reserved_bytes'] = max(0, p.get('reserved_bytes', 0) - item['size'])
-        c.execute('DELETE FROM central_brain.transfer_reservations WHERE id=%s', (sid,))
         if p['reserved_bytes']:
-            c.execute('INSERT INTO central_brain.transfer_reservations(id,workspace_id,created_by,size_bytes) VALUES(%s,%s,%s,%s)',
-                      (sid, auth.principal.workspace_id, auth.principal.actor_id, p['reserved_bytes']))
+            c.execute('UPDATE central_brain.transfer_reservations SET size_bytes=%s WHERE id=%s',
+                      (p['reserved_bytes'], sid))
+        else:
+            c.execute('DELETE FROM central_brain.transfer_reservations WHERE id=%s', (sid,))
     if approve:
         from uuid import UUID
         for ancestor in p.get('destination_ancestors', []):
@@ -79,17 +83,16 @@ def review(library, auth, sid, index, approve, c, stored_keys):
             library._get(c, auth, existing['id'])
             version = c.execute('SELECT sha256,size FROM central_brain.library_versions WHERE node_id=%s ORDER BY version DESC LIMIT 1',
                                 (existing['id'],)).fetchone()
-            if (existing['kind'] != 'file' or existing['visibility'] != 'workspace' or not version
-                    or version['sha256'] != item['sha256'] or version['size'] != item['size']):
-                raise HTTPException(409, f'{name} already exists with different contents. Review or rename this proposal before approving it.')
+            if existing['kind'] != 'file' or existing['visibility'] != 'workspace' or not version:
+                raise HTTPException(409, 'The destination conflicts with an existing item.')
+            if version['sha256'] != item['sha256'] or version['size'] != item['size']:
+                library.upload(auth, name, data, parent, node_id=existing['id'],
+                               connection=c, stored_keys=stored_keys,
+                               source_created_at=row['created_at'], source_upload_id=sid)
         else:
-            library.upload(auth, name, data, parent, connection=c, stored_keys=stored_keys)
+            library.upload(auth, name, data, parent, connection=c, stored_keys=stored_keys,
+                               source_created_at=row['created_at'], source_upload_id=sid)
     p.setdefault('reviews', {})[str(index)] = 'approved' if approve else 'rejected'
-    status = 'proposed'
-    if all(p['reviews'].get(str(i), 'pending') != 'pending' for i in [-1, -2, *range(len(p['files']))]):
-        if p.get('transfer_inventory'):
-            queue_cleanup(c, auth, sid, p)
-        status = 'approve' if any(v == 'approved' for v in p['reviews'].values()) else 'reject'
-        p = {k: p[k] for k in ('name', 'folder_path', 'fingerprint', 'reviews') if k in p}
+    p, status = finish_archive(library, auth, c, sid, p)
     c.execute('UPDATE central_brain.library_suggestions SET payload=%s,status=%s WHERE id=%s', (Jsonb(p), status, sid))
     library._audit(c, auth, 'archive.file_approved' if approve else 'archive.file_rejected', sid)

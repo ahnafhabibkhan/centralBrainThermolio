@@ -475,3 +475,21 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
   .theme-toggle>span:not(.theme-switch) { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
 }
 @media(prefers-reduced-motion:reduce) { .theme-switch::after { transition:none; } }
+
+/* Review selections remain visible in both table and narrow screen layouts. */
+.review-select-all { display:flex; align-items:center; gap:9px; margin:0; white-space:nowrap; }
+.review-select-all input,.approval-table [data-review-select] { width:20px; height:20px; margin:0; padding:0; accent-color:var(--control); cursor:pointer; }
+.review-selection-help { flex-basis:100% !important; margin:0; }
+.approval-table th.review-selection-cell,.approval-table td.review-selection-cell { width:44px; text-align:center; }
+.approval-table th:nth-child(2) { width:44%; text-align:left; }
+.approval-table td[data-review-name] { text-align:left; }
+.approval-table tr:has([data-review-select]:checked) { outline:2px solid var(--control); outline-offset:-2px; }
+@media(max-width:600px) {
+  .approval-table tr { grid-template-columns:24px minmax(0,1fr); }
+  .approval-table td.review-selection-cell { width:auto; grid-column:1; grid-row:1; padding-top:3px; }
+  .approval-table td:not(.review-selection-cell) { grid-column:2; }
+  .approval-table td[data-review-name] { font-weight:600; }
+  .approval-table td:nth-child(2)::before { content:none; }
+  .approval-table td:nth-child(3)::before { content:"Destination: "; color:var(--muted); }
+  .approval-table td.approval-empty { grid-column:1/-1; }
+}

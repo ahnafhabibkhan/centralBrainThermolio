@@ -47,7 +47,8 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
             raise HTTPException(422, 'A file path cannot also be a folder path.')
     # Reuse destination validation and the existing reviewable archive workflow.
     prepared = propose_archive(library, auth, folder_path, summary, source_reference, [],
-                               destination_confirmed, summary_filename, connection=connection)
+                               destination_confirmed, summary_filename, connection=connection,
+                               fingerprint_inventory=[f.model_dump() for f in files])
     if prepared.get('status') == 'needs_destination_confirmation':
         return prepared
     sid = prepared['id']
@@ -56,6 +57,8 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
         library._lock(c, auth)
         row = c.execute("SELECT payload,status FROM central_brain.library_suggestions WHERE id=%s FOR UPDATE", (sid,)).fetchone()
         p = row['payload']
+        if row['status'] != 'proposed':
+            return {'id': sid, 'status': row['status'], 'duplicate': True}
         if p.get('transfer_inventory') != inventory:
             if p.get('transfer_inventory') or row['status'] != 'proposed':
                 raise HTTPException(409, 'Use a distinct summary filename for this new batch.')
@@ -69,6 +72,10 @@ def _prepare_project(library, settings, auth, folder_path, summary, source_refer
                      files=[{**f.model_dump(), 'object_key': f'files/{auth.principal.workspace_id}/{uuid4()}',
                              'received': False} for f in files])
             c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), sid))
+        from .pending_uploads import reconcile_pending_uploads
+        reconcile_pending_uploads(library, auth, c)
+        row = c.execute('SELECT payload,status FROM central_brain.library_suggestions WHERE id=%s', (sid,)).fetchone()
+        p = row['payload']
         if row['status'] != 'proposed':
             return {'id': sid, 'status': row['status'], 'duplicate': True}
         now = int(time.time())
@@ -170,8 +177,8 @@ def store_original(library, auth, sid, index, data):
         if not p.get('transfer_inventory') or not 0 <= index < len(p['files']):
             raise HTTPException(404, 'Original not found in this transfer.')
         item = p['files'][claims['index']]
-        if p.get('reviews', {}).get(str(index)) == 'rejected':
-            raise HTTPException(409, 'This original was rejected. Prepare a new proposal to upload it.')
+        if p.get('reviews', {}).get(str(index)) in {'rejected', 'superseded'}:
+            raise HTTPException(409, 'This original was rejected or superseded. Prepare a new proposal to upload it.')
         if len(data) != item['size_bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise HTTPException(422, 'The original does not match its declared size and SHA-256 checksum.')
         duplicate = item['received'] and original_intact(library, item)
@@ -180,7 +187,8 @@ def store_original(library, auth, sid, index, data):
             item['received'] = True
             c.execute('UPDATE central_brain.library_suggestions SET payload=%s WHERE id=%s', (Jsonb(p), UUID(claims['sid'])))
             library._audit(c, auth, 'archive.original_received', UUID(claims['sid']))
-        missing = [f['name'] for f in p['files'] if not f['received']]
+        missing = [f['name'] for i, f in enumerate(p['files'])
+                   if not f['received'] and p.get('reviews', {}).get(str(i), 'pending') == 'pending']
         return {'id': claims['sid'], 'status': 'awaiting_transfer' if missing else 'proposed',
                 'received': item['name'], 'duplicate': duplicate, 'remaining': missing,
                 'instruction': 'Human approval is required before these files enter shared retrieval.'}

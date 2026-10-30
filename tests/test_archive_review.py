@@ -38,14 +38,14 @@ def test_workspace_has_individual_rows_and_bulk_approves_only_ready(pilot, libra
     csrf = re.search(r'name="csrf_token" value="([^"]+)"',login.text).group(1)
     pilot.client.post('/login',data={'token':'owner','csrf_token':csrf})
     page = pilot.client.get('/library')
-    assert 'Approve all (2)' in page.text
+    assert 'Approve selected' in page.text and len(page.context['approval_items']) == 2
     assert page.text.count('data-queue-upload') == 2
-    from html import unescape
-    items = unescape(re.search(r'name="items" value="([^"]+)"',page.text).group(1))
+    import json
+    items = json.dumps(page.context['approval_items'])
     csrf = re.search(r'name="csrf_token" value="([^"]+)"',page.text).group(1)
     assert pilot.client.post('/library/approve-all',data={'items':items,'csrf_token':csrf}).status_code == 200
     page = pilot.client.get('/library')
-    assert 'Approve all (2)' not in page.text
+    assert not page.context['approval_items']
     assert page.text.count('data-queue-upload') == 2
 
 
@@ -65,7 +65,6 @@ def test_single_entry_does_not_decode_other_originals(monkeypatch):
 
 def test_bulk_json_groups_preserve_completed_approvals_and_download_original(pilot, library):
     import json
-    from html import unescape
     data = b'original pdf bytes' * 10000
     receipt = prepare(pilot, library, {'Bills/original.pdf': data, 'Bills/missing.pdf': data})
     sid = str(receipt['id'])
@@ -73,9 +72,9 @@ def test_bulk_json_groups_preserve_completed_approvals_and_download_original(pil
     login = pilot.client.get('/login')
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', login.text)[1]
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
-    page = pilot.client.get('/library').text
-    assert 'data-queue-filter="ready"' in page and 'data-queue-filter="upload"' in page
-    assert f'href="/library/suggestions/{sid}"' not in page
+    page = pilot.client.get('/library')
+    assert 'data-queue-filter="ready"' in page.text and 'data-queue-filter="upload"' in page.text
+    assert f'href="/library/suggestions/{sid}"' not in page.text
     legacy = pilot.client.get('/library/suggestions/' + sid, follow_redirects=False)
     assert legacy.headers['location'] == '/library#approvals'
     url = f'/library/suggestions/{sid}/files/0/download'
@@ -83,8 +82,8 @@ def test_bulk_json_groups_preserve_completed_approvals_and_download_original(pil
     assert downloaded.content == data
     assert downloaded.headers['content-disposition'].startswith('attachment;')
     assert pilot.client.get(f'/library/suggestions/{sid}/files/1/download').status_code == 409
-    items = json.loads(unescape(re.search(r'name="items" value="([^"]+)"', page)[1]))
-    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
+    items = page.context['approval_items']
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text)[1]
     headers = {'Accept': 'application/json'}
     first = pilot.client.post('/library/approve-all', data={'items': json.dumps(items[:1]), 'csrf_token': csrf}, headers=headers)
     assert first.json() == {'approved': 1}
@@ -96,16 +95,15 @@ def test_bulk_json_groups_preserve_completed_approvals_and_download_original(pil
 
 def test_fifty_nine_approvals_can_complete_in_successive_groups(pilot, library):
     import json
-    from html import unescape
     originals = {f'Files/{i}.txt': f'Original file {i}.'.encode() for i in range(57)}
     receipt = prepare(pilot, library, originals)
     for upload in receipt['uploads']:
         assert send(pilot, upload, originals[upload['name']]).status_code == 200
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', pilot.client.get('/login').text)[1]
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
-    page = pilot.client.get('/library').text
-    items = json.loads(unescape(re.search(r'name="items" value="([^"]+)"', page)[1]))
-    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page)[1]
+    page = pilot.client.get('/library')
+    items = page.context['approval_items']
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text)[1]
     assert len(items) == 59
     for start in range(0, len(items), 3):
         batch = items[start:start + 3]
@@ -115,21 +113,21 @@ def test_fifty_nine_approvals_can_complete_in_successive_groups(pilot, library):
     assert len([n for n in library.snapshot(pilot.auth) if n['kind'] == 'file']) == 59
 
 
-def test_duplicate_original_reuses_exact_copy_but_does_not_overwrite(pilot, library):
+def test_duplicate_original_reuses_exact_copy_and_versions_changed_content(pilot, library):
     for number, data in enumerate([b'original', b'original', b'changed']):
         receipt = prepare(pilot, library, {'Files/same.txt': data}, summary_filename=f'batch-{number}.md', destination_confirmed=True)
         sid = UUID(str(receipt['id']))
         assert send(pilot, receipt['uploads'][0], data).status_code == 200
         with library.repo._connection(pilot.auth) as c:
             item = approval_item(library, pilot.auth, c, 'archive_file', sid, 0)
-        if number < 2:
-            assert approve_batch(library, pilot.auth, [item]) == 1
-        else:
-            with pytest.raises(HTTPException) as error:
-                approve_batch(library, pilot.auth, [item])
-            assert error.value.status_code == 409
-            assert 'different contents' in error.value.detail
+        assert approve_batch(library, pilot.auth, [item]) == 1
     files = [n for n in library.snapshot(pilot.auth) if n['kind'] == 'file']
     assert len(files) == 1
     with library.download(pilot.auth, files[0]['id'])[1] as stream:
-        assert stream.read() == b'original'
+        assert stream.read() == b'changed'
+    with library.repo._connection(pilot.auth) as c:
+        versions = c.execute('SELECT version, sha256 FROM central_brain.library_versions WHERE node_id=%s ORDER BY version',
+                             (files[0]['id'],)).fetchall()
+    import hashlib
+    assert [row['version'] for row in versions] == [1, 2]
+    assert [row['sha256'] for row in versions] == [hashlib.sha256(data).hexdigest() for data in (b'original', b'changed')]

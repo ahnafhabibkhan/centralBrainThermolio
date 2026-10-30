@@ -1,8 +1,14 @@
 # Chat archives and bulk approval
 
-The library has an Approve all button above the approval table. It approves only the proposals shown in that page snapshot, including memories, files, folder suggestions, and chat archives. A changed proposal or failed operation stops the entire batch. New arrivals are not silently included. The button remains visible but disabled when the queue is empty.
+The approval table has a checkbox beside each proposed change. Select all selects the rows in the current filter. Approve selected reviews only the selected ready items, and Reject selected also supports originals whose contents have not arrived. The page shows up to 150 pending changes, with matching selection tokens for every displayed row. Reviewing those changes exposes the remaining queue.
 
-A chat archive is one proposal containing a folder path, a conversation summary, a source reference, and the original files actually transferred by the assistant. Approval creates missing folders and all files together. Existing folders are reused; existing files are not overwritten. When adding another conversation to the same folder, choose a distinct summary_filename such as logo-follow-up.md. Its companion source becomes logo-follow-up-source.md. A separate conversation subfolder is also supported.
+The browser sends selected items in groups of three. Each request is atomic and verifies the original proposal fingerprints, so changed proposals and new arrivals cannot silently enter the selection. A confirmed rate limit pauses the current group for the server's Retry-After interval and resumes automatically without losing confirmed progress. Other failures leave completed groups intact and require review before retrying. The server accepts at most 150 distinct items per request. The existing `/library/approve-all` endpoint remains available for compatible clients.
+
+Workspace reviewers with internal access can inspect and review shared chat archives submitted by other workspace members or connector identities. Existing destination folders, original-file subfolders, and recorded ancestors must remain shared and accessible throughout their current parent chains. Authorization checks the stored hierarchy directly, including archives created before this access policy. Upload ownership, private organization suggestions, and connector transfer credentials retain their existing access restrictions.
+
+A chat archive contains a folder path, a conversation summary, a source reference, and the original files actually transferred by the assistant. Each original and generated document can be reviewed separately. Approval creates missing folders and reuses existing shared folders. When repeated uploads target the same filename in the same destination folder, only the latest eligible upload remains pending. Files with the same name in different folders remain separate. Approving changed contents creates a new version of the existing file while preserving its earlier versions. A matching checksum reuses the existing version. A later upload still requires human approval.
+
+When adding a distinct conversation to the same folder, choose a separate summary_filename such as logo-follow-up.md. Its companion source becomes logo-follow-up-source.md. A separate conversation subfolder is also supported.
 
 For a logo conversation, the resulting arrangement can be:
 
@@ -26,7 +32,7 @@ The source file lists the exact transferred filenames, sizes, and SHA-256 checks
 2. It calls `find_folders` with the project and category. Related brand, logo, identity, and asset folder names are matched together. Results are limited to accessible folders.
 3. If related folders exist, the assistant shows their paths and asks whether to reuse one or select a separate destination.
 4. For small text originals, it calls `propose_chat_archive` with the agreed folder path, summary, source, and exact original contents. For project files, it calls `prepare_chat_archive_upload` with relative filenames, sizes, and SHA-256 checksums. Its code environment follows the returned transfer mode and sends the actual bytes directly. Larger transfers use a separate raw-byte POST for each original. The server verifies every checksum and blocks approval until all originals arrive. Both tools return a destination-confirmation response if matching folders exist and confirmation was omitted.
-5. A reviewer inspects the archive in the approval panel and approves it, individually or with Approve all.
+5. A reviewer inspects the archive in the approval panel and approves its files individually or through the selection controls.
 6. The folder tree and context revision update immediately. File contents become searchable after the existing indexing worker processes them.
 
 ## Limits
@@ -45,4 +51,4 @@ Memories remain Markdown. Saving a memory alone does not create a category folde
 
 ## Verification
 
-The automated suite covers exact SVG and binary preservation, approval visibility, related-folder confirmation, folder reuse, duplicate proposals, stale batches, proposals arriving after page load, permission checks, source escaping, CSRF protection, conflicts, and rollback after a storage failure. It also verifies handoff expiry, checksum rejection, revoked access, and the requirement for a separate human approval. A mobile browser check covers archive inspection in the existing page, bulk approval, the empty queue, and the resulting folder tree.
+The automated suite covers exact SVG and binary preservation, approval visibility, related-folder confirmation, folder reuse, duplicate proposals, stale selections, proposals arriving after page load, permission checks, source escaping, CSRF protection, conflicts, and rollback after a storage failure. Selected rejection covers incomplete uploads and releases their reserved storage. Both bulk review endpoints share a bounded rate allowance that is independent of ordinary page traffic. The suite also verifies handoff expiry, checksum rejection, revoked access, and the requirement for a separate human approval. Browser checks cover selection controls, retry recovery, the empty queue, and the resulting folder tree.

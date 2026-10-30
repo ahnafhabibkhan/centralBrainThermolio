@@ -12,7 +12,7 @@ from test_pilot import pilot
 from test_library import library
 from test_archives import selection
 from central_brain.archive_transfer import OriginalManifest, prepare_transfer
-from central_brain.archives import approve_batch, review_suggestion
+from central_brain.archives import approval_item, approve_batch, review_suggestion
 from central_brain.library_worker import purge_one
 from central_brain.auth import AuthContext
 
@@ -164,7 +164,7 @@ def test_pending_upload_ui_and_manual_completion(pilot, library):
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
     page = pilot.client.get('/library')
     assert 'nested/missing.txt' in page.text and 'Original file not received' in page.text
-    assert 'Approve all (2)' in page.text
+    assert 'Approve selected' in page.text and len(page.context['approval_items']) == 2
     detail = pilot.client.get('/library/suggestions/' + sid)
     assert 'data-queue-upload' in detail.text
     assert 'Ready to approve' in detail.text
@@ -177,7 +177,7 @@ def test_pending_upload_ui_and_manual_completion(pilot, library):
     assert 'data-queue-upload' not in response.text
     assert not re.search(r'<button[^>]*disabled[^>]*>Approve archive', response.text)
     page = pilot.client.get('/library')
-    assert 'Approve all (3)' in page.text
+    assert len(page.context['approval_items']) == 3
 
 
 def test_archive_review_http_reject_missing_and_approve_received(pilot, library):
@@ -189,21 +189,29 @@ def test_archive_review_http_reject_missing_and_approve_received(pilot, library)
     pilot.client.post('/login', data={'token': 'owner', 'csrf_token': csrf})
     detail = pilot.client.get(path)
     csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text).group(1)
-    assert 'Missing uploads are excluded.' in detail.text
+    assert 'Approval includes ready files only.' in detail.text
     assert 'data-queue-upload' in detail.text
     headers = {'Accept': 'application/json'}
-    rejected_token = pilot.client.post(path, data={'action':'reject','csrf_token':'stale'}, headers=headers)
+    with library.repo._connection(pilot.auth) as c:
+        fingerprint = approval_item(library, pilot.auth, c, 'suggestion', receipt['id'],
+                                    require_ready=False)['fingerprint']
+    rejected_token = pilot.client.post(path, data={'action':'reject','csrf_token':'stale',
+                                                 'fingerprint':fingerprint}, headers=headers)
     assert rejected_token.status_code == 403
     assert 'detail' in rejected_token.json()
-    blocked = pilot.client.post(path, data={'action':'approve','csrf_token':csrf}, headers=headers)
+    blocked = pilot.client.post(path, data={'action':'approve','csrf_token':csrf,
+                                          'fingerprint':fingerprint}, headers=headers)
     assert blocked.status_code == 409
     assert 'originals have not arrived' in blocked.json()['detail']
-    rejected = pilot.client.post(path, data={'action':'reject','csrf_token':csrf}, headers=headers)
+    rejected = pilot.client.post(path, data={'action':'reject','csrf_token':csrf,
+                                           'fingerprint':fingerprint}, headers=headers)
     assert rejected.json() == {'status':'rejected'}
     assert library.usage(pilot.auth)['used'] == 0
     receipt = prepare(pilot, library, {'review.txt':data}, summary_filename='ready.md')
     assert send(pilot, receipt['uploads'][0], data).status_code == 200
+    with library.repo._connection(pilot.auth) as c:
+        fingerprint = approval_item(library, pilot.auth, c, 'suggestion', receipt['id'])['fingerprint']
     approved = pilot.client.post('/library/suggestions/' + str(receipt['id']),
-        data={'action':'approve','csrf_token':csrf}, headers=headers)
+        data={'action':'approve','csrf_token':csrf,'fingerprint':fingerprint}, headers=headers)
     assert approved.json() == {'status':'approved'}
     assert any(n['name'] == 'review.txt' for n in library.snapshot(pilot.auth))

@@ -88,9 +88,22 @@ class Library:
             raise
 
     def _get(self, c, auth, node_id, review=False):
+        """Require access to the node and every active folder leading to its root."""
         row = c.execute(
-            "SELECT * FROM central_brain.library_nodes WHERE id=%s AND sensitivity=ANY(%s)",
-            (node_id, auth.principal.sensitivities),
+            """WITH RECURSIVE ancestry AS (
+                SELECT id,parent_id,ARRAY[id] AS visited
+                FROM central_brain.library_nodes
+                WHERE id=%(id)s AND sensitivity=ANY(%(levels)s)
+                UNION ALL
+                SELECT parent.id,parent.parent_id,child.visited||parent.id
+                FROM central_brain.library_nodes parent JOIN ancestry child
+                    ON parent.id=child.parent_id
+                WHERE parent.kind='folder' AND parent.status='active'
+                    AND parent.sensitivity=ANY(%(levels)s)
+                    AND cardinality(child.visited)<32 AND NOT parent.id=ANY(child.visited)
+            ) SELECT n.* FROM central_brain.library_nodes n WHERE n.id=%(id)s
+                AND EXISTS (SELECT 1 FROM ancestry WHERE parent_id IS NULL)""",
+            {"id": node_id, "levels": auth.principal.sensitivities},
         ).fetchone()
         if not row or (row["status"] != "active" and not review):
             raise HTTPException(404, "File or folder not found.")
@@ -241,7 +254,8 @@ class Library:
                 ), tree AS (
                     SELECT v.*,ARRAY[v.name] AS parts,ARRAY[v.id] AS ancestors FROM visible v WHERE parent_id IS NULL
                     UNION ALL SELECT v.*,t.parts||v.name,t.ancestors||v.id FROM visible v JOIN tree t ON v.parent_id=t.id
-                    WHERE t.kind='folder' AND cardinality(t.parts)<32 AND NOT v.id=ANY(t.ancestors)
+                    WHERE t.kind='folder' AND t.status='active'
+                        AND cardinality(t.parts)<32 AND NOT v.id=ANY(t.ancestors)
                 ) SELECT * FROM tree ORDER BY parts,id LIMIT 10001""",
                 {"levels": auth.principal.sensitivities, "review": review},
             ).fetchall()
@@ -485,10 +499,12 @@ class Library:
                 """WITH RECURSIVE subtree AS (
                     SELECT n.*,ARRAY[n.name] AS parts
                     FROM central_brain.library_nodes n WHERE n.id=%(root)s
+                        AND n.sensitivity=ANY(%(levels)s)
                     UNION ALL
                     SELECT n.*,s.parts||n.name
                     FROM central_brain.library_nodes n JOIN subtree s ON n.parent_id=s.id
-                    WHERE cardinality(s.parts)<32
+                    WHERE s.kind='folder' AND s.status='active'
+                        AND n.sensitivity=ANY(%(levels)s) AND cardinality(s.parts)<32
                 )
                 SELECT s.*,v.object_key,v.size,m.content,m.source,m.status AS memory_status,
                     m.deleted_at

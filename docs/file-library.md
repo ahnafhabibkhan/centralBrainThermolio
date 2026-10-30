@@ -8,6 +8,8 @@ Private S3 objects contain unchanged originals under generated immutable keys. P
 
 Workspace files are shared with authorized identities in the workspace. Private files are accessible only to the creating Central Brain identity. ChatGPT and Claude use the identity selected during Central Brain OAuth sign-in, which can differ from their own account email. Folders are workspace organization containers; they do not broaden private file access.
 
+Direct file access also requires an accessible path through active parent folders. Moving a shared file or its parent beneath a private or sensitivity-restricted folder removes access for identities that cannot access that path. File reads, historical versions, previews, downloads, exports, and mutations apply this restriction.
+
 Your uploads become available immediately, with search available after processing. Assistant-created Markdown or text files require review. Folder creation and move suggestions also require review. Existing memory proposals continue through the memory approval queue.
 
 ## Pilot limits
@@ -38,6 +40,8 @@ After deployment, refresh the Central Brain connector's tools in Claude and the 
 Apply migration `004_library.sql` using the migration role. The local bootstrap command includes it. Start the web app normally and run `PYTHONPATH=src .venv/bin/python -m central_brain.library_worker` as a separate local process. Local originals default to `work/library`; production requires `LIBRARY_BUCKET`.
 
 Production uses the existing EC2 instance plus a private S3 bucket. The `library-worker` Compose service runs the queue. A host systemd timer renews a storage-only assumed role every 30 minutes. The containers receive a read-only credentials directory and have instance metadata access disabled. The S3 role cannot access database backups, SSM parameters, or other buckets. Objects use S3-managed AES256 encryption and the bucket denies public and non-TLS access.
+
+The worker discovers invited identities only within workspaces administered by configured identities. It refreshes this registry between processing cycles after at least 30 seconds have elapsed. Queue operations use reader and writer roles under the existing workspace and private-record policies. Failed identity refreshes temporarily remove discovered identities until a later refresh succeeds, and failed deletion attempts do not prevent extraction. Configured identities retain precedence over database entries for the same actor.
 
 The database was backed up before migration. Do not roll back by dropping library tables or deleting S3 objects. Restore the previous application image and Compose configuration if necessary; the additive migration remains compatible with the previous memory service. Preserve both database backups and all original objects for recovery. The application retains originals and their versions; an operator-approved retention or purge procedure is needed to reclaim quota in this pilot.
 

@@ -12,3 +12,11 @@ __pycache__/
 node_modules/
 dist/
 coverage/
+output/
+tmp/
+**/* 2.py
+.env 2.example
+README 2.md
+docker-compose 2.yml
+._*
+**/._*

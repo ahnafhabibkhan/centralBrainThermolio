@@ -8,3 +8,10 @@ work
 .ruff_cache
 *.dump
 **/* 2.py
+output
+tmp
+.env 2.example
+README 2.md
+docker-compose 2.yml
+._*
+**/._*
